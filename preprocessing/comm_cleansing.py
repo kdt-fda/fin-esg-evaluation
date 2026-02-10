@@ -1,86 +1,107 @@
 import FinanceDataReader as fdr
 import pandas as pd
+import numpy as np
+from pandas.tseries.offsets import Day
 
-start_date = '2023-01-01'
-end_date = '2025-12-31'
+# ============================================================
+# 1. 설정 및 기간 확장
+# ============================================================
+USER_START_DATE = '2023-01-01'
+END_DATE = '2025-12-31'
+COMM_STOCKS = {
+    'NAVER': '035420', '카카오': '035720', 'SK텔레콤': '017670', 
+    '하이브': '352820', 'KT': '030200', '크래프톤': '259960', 
+    'LG유플러스': '032640', '엔씨소프트': '036570', '넷마블': '251270', '제일기획': '030000'
+}
 
-# 종목 데이터 불러오기 및 통합
-df_2023 = pd.read_csv('stock_data_2023.csv')
-df_2024 = pd.read_csv('stock_data_2024.csv')
-df_2025 = pd.read_csv('stock_data_2025.csv')
-df_merged = pd.concat([df_2023, df_2024, df_2025])
+FETCH_START_DATE = (pd.to_datetime(USER_START_DATE) - Day(250)).strftime('%Y-%m-%d')
 
-comm = ['NAVER', '카카오', 'SK텔레콤', '하이브', 'KT',
-        '크래프톤', 'LG유플러스', '엔씨소프트', '넷마블', '제일기획']
+def safe_fdr_fetch(ticker, start, end):
+    """인덱스 이름 이슈를 방지하며 안전하게 데이터를 가져오는 헬퍼 함수"""
+    df = fdr.DataReader(ticker, start, end)
+    # 인덱스 이름을 'Date'로 강제 지정 후 컬럼으로 변환
+    df.index.name = 'Date'
+    return df.reset_index()
 
-df_merged["Date"] = pd.to_datetime(df_merged["Date"], format="%Y.%m.%d")
+def fetch_all_data():
+    """KeyError: 'Date'를 방지하는 데이터 수집 로직"""
+    stock_list = []
+    for name, ticker in COMM_STOCKS.items():
+        print(f"📡 {name}({ticker}) 수집 중...")
+        df = safe_fdr_fetch(ticker, FETCH_START_DATE, END_DATE)
+        df = df[['Date', 'Close']].copy()
+        df['Ticker'] = ticker
+        df['Stock_Name'] = name
+        stock_list.append(df)
+    
+    full_stocks = pd.concat(stock_list).sort_values(['Stock_Name', 'Date'])
 
-df_merged = df_merged[df_merged["Stock_Name"].isin(comm)]
+    print("📡 외부 경제 지표 및 산업 ETF 수집 중...")
+    # 외부 데이터 수집 시에도 safe_fdr_fetch 사용
+    ndx = safe_fdr_fetch('^NDX', FETCH_START_DATE, END_DATE)[['Date', 'Close']]
+    ndx.columns = ['Date', 'NDX_Close']
+    
+    us10yt = safe_fdr_fetch('US10YT', FETCH_START_DATE, END_DATE)[['Date', 'Close']]
+    us10yt.columns = ['Date', 'US10YT_Close']
 
-# 커뮤니케이션서비스 추가 파생 지표
-# 1. 성장 : 나스닥 100 지수 -> 글로벌 심리
-ndx = fdr.DataReader('^NDX', start_date, end_date)
-ndx = ndx['Close']
-ndx = ndx.reset_index()
-ndx.columns = ['Date', 'Close']
-# ndx.to_csv('NDX.csv', index=False)
+    tigercomm = safe_fdr_fetch('315270', FETCH_START_DATE, END_DATE)[['Date', 'Close']]
+    tigercomm.columns = ['Date', 'TigerComm_Close']
 
-# 2. 성장 : 나스닥 상관계수 -> 동조성 (corr_NDX)
-# 종목 데이터와 나스닥 데이터 결합 (Merge)
-df_merged = pd.merge(df_merged, ndx, on='Date', how='left', suffixes=('', '_ndx'))
+    # 데이터 통합
+    merged = pd.merge(full_stocks, ndx, on='Date', how='left')
+    merged = pd.merge(merged, us10yt, on='Date', how='left')
+    merged = pd.merge(merged, tigercomm, on='Date', how='left')
+    
+    return merged
 
-# 수익률(Return) 계산
-# 나스닥은 한국 시간 기준 전날 종가를 반영하기 위해 shift(1) 적용
-df_merged['ret_stock'] = df_merged['Close'].pct_change()
-df_merged['ret_ndx'] = df_merged['Close_ndx'].shift(1).pct_change()
+# ============================================================
+# 2. 지표 계산 함수
+# ============================================================
+def calculate_metrics(group):
+    # NaN 방지를 위해 정렬 보장
+    group = group.sort_values('Date')
+    
+    s_ret = group['Close'].pct_change()
+    n_ret = group['NDX_Close'].shift(1).pct_change()
+    i_ret = group['US10YT_Close'].pct_change()
 
-# 60일 Rolling Correlation 산출 (핵심 지표)
-df_merged['corr_NDX'] = df_merged['ret_stock'].rolling(window=60).corr(df_merged['ret_ndx'])
+    # 1. 나스닥 상관계수 (60일)
+    group['corr_NDX'] = s_ret.rolling(60).corr(n_ret)
 
-# 3. 금리 : 미 10년물 국채 금리 -> 밸류에이션
-us10yt = fdr.DataReader('US10YT', start_date, end_date)
-us10yt = us10yt['Close']
-us10yt = us10yt.reset_index()
-us10yt.columns = ['Date', 'Close']
-# us10yt.to_csv('US10YT.csv', index=False)
+    # 2. 금리 베타 (60일)
+    cov = s_ret.rolling(60).cov(i_ret)
+    var = i_ret.rolling(60).var()
+    group['interest_beta'] = cov / var
 
-# 4. 민감도 : 금리 베타 -> 반응도
-# 데이터 통합 (df_merged + us10yt)
-df_merged = pd.merge(df_merged, us10yt, on='Date', how='left', suffixes=('', '_us10yt'))
+    # 3. 산업 Z-score (120일)
+    rel_price = group['Close'] / group['TigerComm_Close']
+    group['z_score'] = (rel_price - rel_price.rolling(120).mean()) / rel_price.rolling(120).std()
+    
+    return group
 
-# 금리 변화율 계산
-df_merged['ret_us10yt'] = df_merged['Close_us10yt'].pct_change() # 금리 자체의 변화율
+# ============================================================
+# 3. 실행 및 저장
+# ============================================================
+if __name__ == "__main__":
+    # 1) 데이터 수집
+    df_raw = fetch_all_data()
 
-# 60일 Rolling 금리 베타 산출
-# 공분산(Covariance) / 분산(Variance)
-rolling_cov = df_merged['ret_stock'].rolling(window=60).cov(df_merged['ret_us10yt'])
-rolling_var = df_merged['ret_us10yt'].rolling(window=60).var()
+    # 2) 종목별 지표 계산
+    print("🚀 지표 산출 중 (Lookback 적용)...")
+    df_processed = df_raw.groupby('Stock_Name', group_keys=False).apply(calculate_metrics)
 
-df_merged['interest_beta'] = rolling_cov / rolling_var
+    # 3) 최종 필터링: 사용자 시작일 기준
+    df_final = df_processed[df_processed['Date'] >= USER_START_DATE].copy()
 
-# 5. 이벤트 : 신작/신규 서비스 런칭일 -> 모멘텀
-# TODO: 신작/신규 서비스 런칭일 해당 날짜 전후 1~2주를 1로, 나머지를 0으로 채우는 컬럼을 추가
+    # 4) 컬럼 정리 (Date, Ticker, Stock_Name, Close + 지표 3개)
+    keep_cols = ['Date', 'Ticker', 'Stock_Name', 'Close', 'corr_NDX', 'interest_beta', 'z_score']
+    df_final = df_final[keep_cols]
 
-# 6. 방어 : 배당 수익률(더미 변수) -> 통신주 특화
-# TODO: 각 기업 IR 페이지에서 작년 배당금을 확인한 뒤 (배당금 / 현재 주가)를 계산한 컬럼
+    # 5) 저장
+    output_path = 'comm_processed.csv'
+    df_final.to_csv(output_path, index=False, encoding='utf-8-sig')
 
-# 7. 상대 : 산업 Z-score -> 상대 강도
-# TIGER200 커뮤니케이션서비스
-tigercomm = fdr.DataReader('315270', start_date, end_date)
-tigercomm = tigercomm['Close']
-tigercomm = tigercomm.reset_index()
-tigercomm.columns = ['Date', 'Close']
-# tigercomm.to_csv('TIGERcomm.csv', index=False)
-
-# 데이터 통합 (df_merged + tigercomm)
-df_merged = pd.merge(df_merged, tigercomm, on='Date', how='left', suffixes=('', '_tigercomm'))
-
-# 상대 가격(Relative Price) 산출
-df_merged['rel_price'] = df_merged['Close'] / df_merged['Close_tigercomm']
-
-# 120일 Rolling 평균 및 표준편차 산출
-df_merged['rel_price_mean'] = df_merged['rel_price'].rolling(window=120).mean()
-df_merged['rel_price_std'] = df_merged['rel_price'].rolling(window=120).std()
-
-# 최종 산업 Z-score 계산
-df_merged['z_score'] = (df_merged['rel_price'] - df_merged['rel_price_mean']) / df_merged['rel_price_std']
+    print("-" * 30)
+    print(f"✅ 모든 오류 해결 및 리팩토링 완료: {output_path}")
+    print(f"최종 데이터 컬럼: {df_final.columns.tolist()}")
+    print(df_final.head(3))
