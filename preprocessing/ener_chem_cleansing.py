@@ -1,135 +1,176 @@
+import os
 import FinanceDataReader as fdr
-import pandas_datareader.data as web
 import yfinance as yf
 import pandas as pd
+import numpy as np
+import requests
+from dotenv import load_dotenv
 
-start_date = '2023-01-01'
-end_date = '2025-12-31'
+# ============================================================
+# [SECTION 1] 설정 및 기간 확장
+# ============================================================
+load_dotenv()
+USER_START_DATE = '2023-01-01'
+END_DATE = '2025-12-31'
+# 60일 베타 등 지표 안정성을 위해 2021년부터 충분히 수집
+FETCH_START_DATE = '2021-01-01'
+START_YM = '202101'
 
-# 종목 데이터 불러오기 및 통합
-df_2023 = pd.read_csv('stock_data_2023.csv')
-df_2024 = pd.read_csv('stock_data_2024.csv')
-df_2025 = pd.read_csv('stock_data_2025.csv')
-df_merged = pd.concat([df_2023, df_2024, df_2025])
+ENCH_STOCKS = {
+    'SK': '034730', 'LG화학': '051910', 'HD현대': '267250', 'SK이노베이션': '096770', 
+    'S-oil': '010950', '한화': '000880', 'GS': '078930', '한화솔루션': '009830', 
+    'SKC': '011790', '금호석유화학': '011780', '이수스페컬티케미컬': '457190', 
+    '롯데케미칼': '011170', '한솔케미칼': '014680', 'OCI홀딩스': '010060', 
+    '한국카본': '017960', '효성티앤씨': '298020', '코오롱인더': '120110', 
+    '롯데정밀화학': '004000', 'SK케미칼': '285130', 'HS효성첨단소재': '298050',
+    '태광산업': '003240', '대한유화': '006650', '후성': '093370', 
+    'TKG휴켐스': '069260', '미원상사': '002840', '미원에스씨': '268280', '코스모화학': '005420'
+}
 
-ench = ['SK', 'LG화학', 'HD현대', 'SK이노베이션', 'S-oil',
-        '한화', 'GS', '한화솔루션', 'SKC', '금호석유화학',
-        '이수스페컬티케미컬', '롯데케미칼', '한솔케미칼', 'OCI홀딩스', '한국카본',
-        '효성티앤씨', '코오롱인더', '롯데정밀화학', 'SK케미칼', 'HS효성첨단소재',
-        '태광산업', '대한유화', '후성', 'TKG휴켐스', '미원상사',
-        '미원에스씨', '코스모화학']
+# ============================================================
+# [SECTION 2] Helper 함수 (타입 동기화 강화)
+# ============================================================
+class EcosClient:
+    BASE_URL = "https://ecos.bok.or.kr/api"
+    def __init__(self):
+        self.api_key = os.getenv("ECOS_API_KEY")
 
-df_merged["Date"] = pd.to_datetime(df_merged["Date"], format="%Y.%m.%d")
+    def fetch_data(self, stat_code, item_code, start, end):
+        url = f"{self.BASE_URL}/StatisticSearch/{self.api_key}/json/kr/1/500/{stat_code}/M/{start}/{end}/{item_code}"
+        try:
+            resp = requests.get(url).json()
+            rows = resp.get("StatisticSearch", {}).get("row", [])
+            if not rows: return pd.DataFrame(columns=['Date', 'Value'])
+            df = pd.DataFrame(rows)
+            df['Date'] = pd.to_datetime(df['TIME'], format='%Y%m').dt.normalize()
+            df['Value'] = pd.to_numeric(df['DATA_VALUE'])
+            return df[['Date', 'Value']].sort_values('Date').drop_duplicates('Date')
+        except: return pd.DataFrame(columns=['Date', 'Value'])
 
-df_merged = df_merged[df_merged["Stock_Name"].isin(ench)]
+def safe_fetch_fdr(ticker, start, end, col_name='Close'):
+    try:
+        df = fdr.DataReader(ticker, start, end)
+        if df is None or df.empty: return pd.DataFrame(columns=['Date', col_name])
+        df = df.reset_index()
+        df.columns = ['Date' if c.upper() == 'DATE' else c for c in df.columns]
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
+        val_col = 'Close' if 'Close' in df.columns else df.columns[1]
+        df = df[['Date', val_col]].rename(columns={val_col: col_name})
+        return df.sort_values('Date').drop_duplicates('Date')
+    except: return pd.DataFrame(columns=['Date', col_name])
 
-# 화학 / 에너지 추가 파생 지표
-# 1. 유가 : WTI 원유 선물 -> 유가 수익률
-wti = yf.Ticker('CL=F')
-wti = wti.history(start=start_date, end=end_date)
-wti = wti['Close'].reset_index()
+# ============================================================
+# [SECTION 3] 데이터 수집 및 통합 (Dtype 이슈 해결)
+# ============================================================
+def fetch_ener_chem_data():
+    ecos = EcosClient()
+    
+    # 1. 개별 종목 주가 직접 수집
+    stock_list = []
+    for name, ticker in ENCH_STOCKS.items():
+        print(f"📡 {name}({ticker}) 주가 데이터 수집 중...")
+        df = safe_fetch_fdr(ticker, FETCH_START_DATE, END_DATE, 'Close')
+        if not df.empty:
+            df['Ticker'], df['Stock_Name'] = ticker, name
+            stock_list.append(df)
+    full_stocks = pd.concat(stock_list).reset_index(drop=True)
 
-# 날짜 형식 통일 (타임존 제거 및 날짜만 추출)
-wti['Date'] = pd.to_datetime(wti['Date']).dt.tz_localize(None)
+    # 2. ECOS 공식 지표 수집
+    print("📡 ECOS 에틸렌(30511101AA) 데이터 수집 중...")
+    eth_df = ecos.fetch_data('404Y016', '30511101AA', START_YM, '202512')
+    print("📡 ECOS 나프타(30412101AA) 데이터 수집 중...")
+    nap_df = ecos.fetch_data('404Y016', '30412101AA', START_YM, '202512')
+    print("📡 ECOS 제조업 생산지수(I11AC) 데이터 수집 중...")
+    mfg_df = ecos.fetch_data('901Y032', 'I11AC', START_YM, '202512')
 
-# 시간 정보를 제외하고 '연-월-일' 형식만 남기기
-wti['Date'] = wti['Date'].dt.normalize()
-# wti.to_csv('CL=F.csv', index=False)
+    # 매크로 가공
+    macro_df = pd.DataFrame(columns=['Date'])
+    if not eth_df.empty and not nap_df.empty:
+        spread = pd.merge(eth_df.rename(columns={'Value':'E'}), nap_df.rename(columns={'Value':'N'}), on='Date', how='inner')
+        spread['spread_momentum'] = (spread['E'] - spread['N']).pct_change(1)
+        macro_df = spread[['Date', 'spread_momentum']]
 
-# 유가 수익률(Return) 산출
-# 일간 수익률 (Daily Return)
-wti['wti_ret_1d'] = wti['Close'].pct_change()
+    if not mfg_df.empty:
+        mfg_df['mfg_lag3'] = mfg_df['Value'].shift(3)
+        mfg_df['mfg_lag6'] = mfg_df['Value'].shift(6)
+        if macro_df.empty: macro_df = mfg_df[['Date', 'mfg_lag3', 'mfg_lag6']]
+        else: macro_df = pd.merge(macro_df, mfg_df[['Date', 'mfg_lag3', 'mfg_lag6']], on='Date', how='outer')
 
-# 주간 수익률 (5거래일 기준, 추세 파악용)
-# 화학주는 유가의 단기 변동보다 1~2주의 방향성에 더 민감합니다.
-wti['wti_ret_5d'] = wti['Close'].pct_change(periods=5)
+    # 3. yfinance 데이터 수집 및 즉각적인 타입 보정
+    print("📡 글로벌 에너지(XLE) 데이터 수집 중...")
+    xle_raw = yf.download('XLE', start=FETCH_START_DATE, end=END_DATE, progress=False)
+    xle = xle_raw['Close'].reset_index()
+    xle.columns = ['Date', 'XLE_Close']
+    
+    # [핵심] 타임존 제거 및 날짜 형식 표준화
+    xle['Date'] = pd.to_datetime(xle['Date']).dt.tz_localize(None).dt.normalize()
+    
+    print("📡 KODEX 에너지화학(117460) 데이터 수집 중...")
+    kodex_ench = safe_fetch_fdr('117460', FETCH_START_DATE, END_DATE, 'Ench_Close')
 
-# 유가 변동성 (Volatility) - 리스크 지표
-# 유가가 급등락할 경우 화학사의 원가 관리 불확실성이 커집니다.
-wti['wti_vol_20d'] = wti['wti_ret_1d'].rolling(window=20).std()
+    # --------------------------------------------------------
+    # [MergeError 방어] 모든 데이터프레임의 Date 타입을 다시 한 번 일치시킴
+    # --------------------------------------------------------
+    all_dfs = [full_stocks, xle, kodex_ench, macro_df]
+    for i in range(len(all_dfs)):
+        if all_dfs[i] is not None and not all_dfs[i].empty:
+            # 모든 날짜 컬럼을 순수 Datetime 형식으로 변환
+            all_dfs[i]['Date'] = pd.to_datetime(all_dfs[i]['Date']).dt.normalize()
+            all_dfs[i] = all_dfs[i].sort_values('Date').reset_index(drop=True)
 
-# 데이터 통합 (df_merged + wti)
-df_merged = pd.merge(df_merged, wti[['Date', 'wti_ret_1', 'wti_ret_5', 'wti_vol_20']], on='Date', how='left')
-df_merged = df_merged.ffill() # 공휴일 결측치 처리
+    full_stocks, xle, kodex_ench, macro_df = all_dfs
 
-# 2. 유가 : 두바이유 -> 유가 lag
-dubai = web.DataReader('POILDUBUSDM', 'fred', start_date, end_date)
-dubai = dubai.reset_index()
-dubai = dubai.rename(columns={'DATE': 'Date', 'POILDUBUSDM': 'dubai'})
-# dubai.to_csv('Dubai.csv', index=False)
+    # 4. 병합 (merge_asof)
+    # 날짜 형식이 일치하므로 에러 없이 병합됨
+    merged = pd.merge_asof(
+        full_stocks, 
+        xle, 
+        on='Date', direction='backward', tolerance=pd.Timedelta('2D')
+    )
+    merged = pd.merge(merged, kodex_ench, on='Date', how='left')
+    
+    if not macro_df.empty:
+        merged = pd.merge_asof(merged, macro_df, on='Date', direction='backward')
 
-# 발주 모멘텀 (유가 lag) 지표 생성
-# 3개월(약 60영업일)과 6개월(약 120영업일) 시차를 적용하여 선행성 확보
-dubai['dubai_lag60'] = dubai['dubai'].shift(3) # 3개월 전 추세
-dubai['dubai_lag120'] = dubai['dubai'].shift(6) # 6개월 전 추세
+    # 5. 결측치 보정
+    fill_cols = ['XLE_Close', 'Ench_Close', 'spread_momentum', 'mfg_lag3', 'mfg_lag6']
+    merged = merged.sort_values(['Stock_Name', 'Date'])
+    merged[fill_cols] = merged.groupby('Stock_Name')[fill_cols].ffill()
+    merged[fill_cols] = merged.groupby('Stock_Name')[fill_cols].bfill()
+        
+    return merged
 
-# 데이터 통합 (df_merged + dubai)
-df_merged = pd.merge(df_merged, dubai[['Date', 'dubai_lag60', 'dubai_lag120']], on='Date', how='left')
-df_merged = df_merged.ffill() # 공휴일 결측치 처리
+# ============================================================
+# [SECTION 4] 파생 지표 계산
+# ============================================================
+def calculate_ener_chem_metrics(group):
+    group = group.sort_values('Date')
+    
+    # 1. 오일 베타 (60일)
+    s_ret = group['Close'].pct_change()
+    x_ret = group['XLE_Close'].pct_change()
+    group['oil_beta'] = s_ret.rolling(60, min_periods=40).cov(x_ret) / (x_ret.rolling(60, min_periods=40).var() + 1e-10)
+    
+    # 2. 산업 Z-score (120일)
+    rel_price = group['Close'] / (group['Ench_Close'] + 1e-9)
+    group['z_score'] = (rel_price - rel_price.rolling(120).mean()) / (rel_price.rolling(120).std() + 1e-9)
+    
+    return group
 
-# 3. 민감도 : 에너지 ETF -> Oil beta
-xle = yf.Ticker('XLE')
-xle = xle.history(start=start_date, end=end_date)
-xle = xle['Close'].reset_index()
-
-# 날짜 형식 통일 (타임존 제거 및 날짜만 추출)
-xle['Date'] = pd.to_datetime(xle['Date']).dt.tz_localize(None)
-
-# 시간 정보를 제외하고 '연-월-일' 형식만 남기기
-xle['Date'] = xle['Date'].dt.normalize()
-# xle.to_csv('XLE.csv', index=False)
-
-# 데이터 통합 (df_merged + xle)
-df_merged = pd.merge(df_merged, xle[['Date', 'Close']], on='Date', how='left', suffixes=('', '_xle'))
-df_merged['Close_xle'] = df_merged['Close_xle'].ffill()
-
-# 수익률 계산 (종목 및 XLE)
-# XLE는 미국 시장 데이터이므로 시차(shift)를 고려
-df_merged['ret_stock'] = df_merged['Close'].pct_change()
-df_merged['ret_xle'] = df_merged['Close_xle'].shift(1).pct_change() # 1일 시차 적용
-
-# 60일 Rolling 오일 베타 산출
-rolling_cov = df_merged['ret_stock'].rolling(window=60).cov(df_merged['ret_xle'])
-rolling_var = df_merged['ret_xle'].rolling(window=60).var()
-df_merged['oil_beta'] = rolling_cov / rolling_var
-
-# 4. 마진 : 에틸렌-나프타 스프레드 -> 스프레드 proxy
-# TODO: ECOS API 활용 직접 계산
-
-# 5. 경기 : 글로벌 제조업 PMI -> PMI lag
-# 제조업 산업 생산 지수
-ipman = web.DataReader('IPMAN', 'fred', start_date, end_date)
-ipman = ipman.reset_index()
-ipman = ipman.rename(columns={'DATE': 'Date'})
-ipman['Date'] = pd.to_datetime(ipman['Date'])
-# ipman.to_csv('IPMAN.csv', index=False)
-
-# 투자 환경 (PMI lag) 지표 생성
-# 에너지/화학 업황의 선행성을 고려하여 3개월(1분기)과 6개월(2분기) 시차 적용
-ipman['IPMAN_lag3'] = ipman['IPMAN'].shift(3) # 3개월 전 경기 지표
-ipman['IPMAN_lag6'] = ipman['IPMAN'].shift(6) # 6개월 전 경기 지표
-
-# 데이터 통합 (종목 데이터와 병합)
-# 월간 PMI 데이터를 일간 주가 데이터에 매칭할 때 ffill()로 빈 날짜를 채워줍니다.
-df_merged = pd.merge(df_merged, ipman, on='Date', how='left')
-df_merged[['IPMAN', 'IPMAN_lag3', 'IPMAN_lag6']] = df_merged[['IPMAN', 'IPMAN_lag3', 'IPMAN_lag6']].ffill()
-
-# 6. 상대 : KRX 에너지 화학지수 -> 산업 Z-score
-# KODEX 에너지화학 ETF
-KODEXench = fdr.DataReader('117460', start_date, end_date)
-KODEXench = KODEXench['Close']
-KODEXench = KODEXench.reset_index()
-# KODEXench.to_csv('KODEXench.csv', index=False)
-
-# 데이터 통합 (df_merged + KODEXmach)
-df_merged = pd.merge(df_merged, KODEXench, on='Date', how='left', suffixes=('', '_kodexench'))
-
-# 상대 가격(Relative Price) 산출
-df_merged['rel_price'] = df_merged['Close'] / df_merged['Close_kodexench']
-
-# 120일 Rolling 평균 및 표준편차 산출
-df_merged['rel_price_mean'] = df_merged['rel_price'].rolling(window=120).mean()
-df_merged['rel_price_std'] = df_merged['rel_price'].rolling(window=120).std()
-
-# 최종 산업 Z-score 계산
-df_merged['z_score'] = (df_merged['rel_price'] - df_merged['rel_price_mean']) / df_merged['rel_price_std']
+# ============================================================
+# [SECTION 5] 실행 및 최종 저장
+# ============================================================
+if __name__ == "__main__":
+    df_raw = fetch_ener_chem_data()
+    
+    if not df_raw.empty:
+        print("🚀 에너지/화학 섹터 파생 지표 산출 중...")
+        df_processed = df_raw.groupby('Stock_Name', group_keys=False).apply(calculate_ener_chem_metrics)
+        df_processed = df_processed.sort_values(['Stock_Name', 'Date']).reset_index(drop=True)
+        
+        df_final = df_processed[df_processed['Date'] >= USER_START_DATE].copy()
+        
+        # 저장
+        df_final.to_csv('ener_chem_processed.csv', index=False, encoding='utf-8-sig')
+        print(f"✅ 전처리 완료: ener_chem_processed.csv (총 {len(df_final)}행)")
+        print(df_final.head(5))
