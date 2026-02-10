@@ -1,113 +1,169 @@
+import os
 import FinanceDataReader as fdr
-import pandas_datareader.data as web
 import yfinance as yf
 import pandas as pd
+import numpy as np
+import requests
+from dotenv import load_dotenv
+from pandas.tseries.offsets import DateOffset
 
-start_date = '2023-01-01'
-end_date = '2025-12-31'
+# ============================================================
+# [SECTION 1] 설정 및 기간 확장
+# ============================================================
+load_dotenv()
+USER_START_DATE = '2023-01-01'
+END_DATE = '2025-12-31'
+# 지표 안정성(120일 Z-score 등)을 위해 2021년부터 충분히 수집
+FETCH_START_DATE = '2021-01-01'
+START_YM = '202101'
 
-# 종목 데이터 불러오기 및 통합
-df_2023 = pd.read_csv('stock_data_2023.csv')
-df_2024 = pd.read_csv('stock_data_2024.csv')
-df_2025 = pd.read_csv('stock_data_2025.csv')
-df_merged = pd.concat([df_2023, df_2024, df_2025])
+HEAVY_STOCKS = {
+    '두산에너빌리티': '034020', 'HD현대중공업': '329180', '한화오션': '042660',
+    'HD현대일렉트릭': '267260', 'HD한국조선해양': '009540', '삼성중공업': '010140',
+    '현대로템': '064350', '효성중공업': '298040', '두산': '000150',
+    'HD현대마린솔루션': '443060', '두산로보틱스': '454910', '두산밥캣': '241560',
+    '한화엔진': '082740', '산일전기': '062040', '현대엘리베이터': '017800',
+    'HD현대마린엔진': '071670', '씨에스윈드': '112610'
+}
 
-heavy = ['두산에너빌리티', 'HD현대중공업', '한화오션', 'HD현대일렉트릭', 'HD한국조선해양',
-        '삼성중공업', '현대로템', '효성중공업', '두산', 'HD현대마린솔루션',
-        '두산로보틱스', '두산밥캣', '한화엔진', '산일전기', '현대엘리베이터',
-        'HD현대마린엔진', '씨에스윈드']
+# ============================================================
+# [SECTION 2] Helper 함수 (Dtype 강제 고정 및 로그 유지)
+# ============================================================
+class EcosClient:
+    BASE_URL = "https://ecos.bok.or.kr/api"
+    def __init__(self):
+        self.api_key = os.getenv("ECOS_API_KEY")
 
-df_merged["Date"] = pd.to_datetime(df_merged["Date"], format="%Y.%m.%d")
+    def fetch_data(self, stat_code, item_code, start, end):
+        url = f"{self.BASE_URL}/StatisticSearch/{self.api_key}/json/kr/1/500/{stat_code}/M/{start}/{end}/{item_code}"
+        try:
+            resp = requests.get(url).json()
+            rows = resp.get("StatisticSearch", {}).get("row", [])
+            if not rows: return pd.DataFrame(columns=['Date', 'Value'])
+            df = pd.DataFrame(rows)
+            df['Date'] = pd.to_datetime(df['TIME'], format='%Y%m').dt.normalize()
+            df['Value'] = pd.to_numeric(df['DATA_VALUE'])
+            return df[['Date', 'Value']].sort_values('Date').drop_duplicates('Date')
+        except: return pd.DataFrame(columns=['Date', 'Value'])
 
-df_merged = df_merged[df_merged["Stock_Name"].isin(heavy)]
+def safe_fetch_fdr(ticker, start, end, col_name='Close'):
+    try:
+        df = fdr.DataReader(ticker, start, end)
+        if df is None or df.empty: return pd.DataFrame(columns=['Date', col_name])
+        df = df.reset_index()
+        df.columns = [c.capitalize() if c.lower() == 'date' else c for c in df.columns]
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
+        val_col = 'Close' if 'Close' in df.columns else df.columns[1]
+        df = df[['Date', val_col]].rename(columns={val_col: col_name})
+        return df.sort_values('Date').drop_duplicates('Date')
+    except: return pd.DataFrame(columns=['Date', col_name])
 
-# 중공업 추가 파생 지표
-# 1. 경기 : 글로벌 제조업 PMI -> 투자 환경 (PMI lag)
-# 제조업 산업 생산 지수
-ipman = web.DataReader('IPMAN', 'fred', start_date, end_date)
-ipman = ipman.reset_index()
-ipman = ipman.rename(columns={'DATE': 'Date'})
-ipman['Date'] = pd.to_datetime(ipman['Date'])
-# ipman.to_csv('IPMAN.csv', index=False)
+# ============================================================
+# [SECTION 3] 데이터 수집 및 통합 (MergeError & 결측치 방어)
+# ============================================================
+def fetch_heavy_ind_data():
+    ecos = EcosClient()
+    
+    # 1. 개별 종목 주가 수집
+    stock_list = []
+    for name, ticker in HEAVY_STOCKS.items():
+        print(f"📡 {name}({ticker}) 주가 데이터 수집 중...")
+        df = safe_fetch_fdr(ticker, FETCH_START_DATE, END_DATE, 'Close')
+        if not df.empty:
+            df['Ticker'], df['Stock_Name'] = ticker, name
+            stock_list.append(df)
+    full_stocks = pd.concat(stock_list).reset_index(drop=True)
 
-# 투자 환경 (PMI lag) 지표 생성
-# 중공업 업황의 선행성을 고려하여 3개월(1분기)과 6개월(2분기) 시차 적용
-ipman['IPMAN_lag3'] = ipman['IPMAN'].shift(3) # 3개월 전 경기 지표
-ipman['IPMAN_lag6'] = ipman['IPMAN'].shift(6) # 6개월 전 경기 지표
+    # 2. ECOS 제조업 생산지수(I11AC) 수집
+    print("📡 ECOS 제조업 생산지수(I11AC) 데이터 수집 중...")
+    mfg_df = ecos.fetch_data('901Y032', 'I11AC', START_YM, '202512')
+    mfg_df = mfg_df.rename(columns={'Value': 'mfg_idx'})
 
-# 데이터 통합 (종목 데이터와 병합)
-# 월간 PMI 데이터를 일간 주가 데이터에 매칭할 때 ffill()로 빈 날짜를 채워줍니다.
-df_merged = pd.merge(df_merged, ipman, on='Date', how='left')
-df_merged[['IPMAN', 'IPMAN_lag3', 'IPMAN_lag6']] = df_merged[['IPMAN', 'IPMAN_lag3', 'IPMAN_lag6']].ffill()
+    # 3. 환율 및 거시 지표 수집
+    print("📡 원/달러 환율(USDKRW=X) 수집 중...")
+    usd_krw_raw = yf.download('USDKRW=X', start=FETCH_START_DATE, end=END_DATE, progress=False)['Close'].reset_index()
+    usd_krw_raw.columns = ['Date', 'USD_KRW']
+    
+    print("📡 에너지 지표(WTI 선물) 수집 중...")
+    wti_raw = yf.download('CL=F', start=FETCH_START_DATE, end=END_DATE, progress=False)['Close'].reset_index()
+    wti_raw.columns = ['Date', 'WTI_Close']
+    
+    print("📡 KODEX 기계장비(102960) 데이터 수집 중...")
+    mach_etf = safe_fetch_fdr('102960', FETCH_START_DATE, END_DATE, 'Mach_Close')
 
-# 2. 수주 : 선박 수주 / 방산 수출 공시 -> 이벤트 (수주 더미/뉴스)
-# TODO: 뉴스 기사?
+    # 병합 전 타입 동기화 (MergeError 방지)
+    def force_sync(df):
+        df = df.copy()
+        df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None).dt.normalize().astype('datetime64[ns]')
+        return df.sort_values('Date').reset_index(drop=True)
 
-# 3. 환율 : 원/달러 환율 -> 채산성 (FX수익률/베타)
-# ECOS 데이터 로드 및 열 이름 정리
-ecos = pd.read_csv('ecos.csv')
-ecos = ecos.rename(columns={'date': 'Date'}) # 'Date'로 통일
-ecos['Date'] = pd.to_datetime(ecos['Date'])
+    full_stocks = force_sync(full_stocks)
+    usd_krw, wti, mach_etf = force_sync(usd_krw_raw), force_sync(wti_raw), force_sync(mach_etf)
+    mfg_df = force_sync(mfg_df)
 
-# 필요한 데이터만 추출 (날짜와 usdkrw 환율)
-fx_data = ecos[['Date', 'usdkrw']].sort_values('Date')
+    # 4. 시계열 병합 (기존 흐름 유지)
+    merged = pd.merge_asof(full_stocks, usd_krw, on='Date', direction='backward', tolerance=pd.Timedelta('2D'))
+    merged = pd.merge_asof(merged, wti, on='Date', direction='backward', tolerance=pd.Timedelta('2D'))
+    merged = pd.merge(merged, mach_etf, on='Date', how='left')
+    merged = pd.merge_asof(merged, mfg_df, on='Date', direction='backward')
 
-# 데이터 통합 (df_merged + fx_data)
-df_merged = pd.merge(df_merged, fx_data, on='Date', how='left')
-df_merged['usdkrw'] = df_merged['usdkrw'].ffill() # 공휴일 등 결측치 처리
+    # 5. [핵심] 병합 후 종목별 결측치 보정 (중간 비어있는 구간 방지)
+    fill_cols = ['USD_KRW', 'WTI_Close', 'Mach_Close', 'mfg_idx']
+    merged = merged.sort_values(['Stock_Name', 'Date'])
+    # groupby ffill/bfill로 공휴일 등으로 인한 중간 NaN을 완벽히 메움
+    merged[fill_cols] = merged.groupby('Stock_Name')[fill_cols].ffill().bfill()
+        
+    return merged
 
-# 수익률 계산
-# ret_fx = fx_momentum 채산성 모멘텀
-df_merged['ret_stock'] = df_merged['Close'].pct_change()
-df_merged['ret_fx'] = df_merged['usdkrw'].pct_change()
+# ============================================================
+# [SECTION 4] 파생 지표 계산 (else 0 및 0 채우기 없음)
+# ============================================================
+def calculate_heavy_metrics(group):
+    group = group.sort_values('Date')
+    s_ret = group['Close'].pct_change()
+    
+    # 1. 환율 민감도 (FX Beta) - 가격이 ffill된 상태라 NaN 없이 계산됨
+    if 'USD_KRW' in group.columns:
+        u_ret = group['USD_KRW'].pct_change()
+        group['fx_beta'] = s_ret.rolling(60, min_periods=30).cov(u_ret) / (u_ret.rolling(60, min_periods=30).var() + 1e-10)
+    
+    # 2. 제조업 지수 모멘텀 및 Lag (ECOS)
+    if 'mfg_idx' in group.columns:
+        group['mfg_momentum'] = group['mfg_idx'].pct_change(3) # 월간 기준 3개월 변화
+        group['mfg_lag3'] = group['mfg_idx'].shift(60) # 일간 기준 약 3개월 전 데이터
+    
+    # 3. 에너지 발주 모멘텀 (WTI 추세)
+    if 'WTI_Close' in group.columns:
+        # min_periods 적용으로 데이터가 쌓이는 시점부터 즉시 산출
+        group['energy_momentum'] = group['WTI_Close'].rolling(60, min_periods=20).mean().pct_change(20)
+    
+    # 4. 산업 내 상대 강도 Z-score (120일)
+    if 'Mach_Close' in group.columns:
+        rel_price = group['Close'] / (group['Mach_Close'] + 1e-9)
+        # min_periods를 30으로 낮추어 신규 상장주 데이터 누락 방지
+        group['z_score'] = (rel_price - rel_price.rolling(120, min_periods=30).mean()) / (rel_price.rolling(120, min_periods=30).std() + 1e-9)
+    
+    return group
 
-# FX 베타 (환율 민감도/채산성) 산출
-# 최근 60일(1분기) 간의 상관관계를 회귀계수로 계산
-rolling_cov = df_merged['ret_stock'].rolling(window=60).cov(df_merged['ret_fx'])
-rolling_var = df_merged['ret_fx'].rolling(window=60).var()
-df_merged['fx_beta'] = rolling_cov / rolling_var
+# ============================================================
+# [SECTION 5] 실행 및 최종 저장
+# ============================================================
+if __name__ == "__main__":
+    df_raw = fetch_heavy_ind_data()
+    
+    if not df_raw.empty:
+        print("🚀 중공업 섹터 파생 지표 산출 중...")
+        df_processed = df_raw.groupby('Stock_Name', group_keys=False).apply(calculate_heavy_metrics)
+        df_processed = df_processed.sort_values(['Stock_Name', 'Date']).reset_index(drop=True)
+        
+        # 분석 대상 기간으로 필터링
+        df_final = df_processed[df_processed['Date'] >= USER_START_DATE].copy()
+        
+        # 최종 컬럼 구성 (인위적인 0 채우기 절대 없음)
+        final_cols = ['Date', 'Ticker', 'Stock_Name', 'Close', 'fx_beta', 'mfg_momentum', 'mfg_lag3', 'energy_momentum', 'z_score']
+        actual_cols = [c for c in final_cols if c in df_final.columns]
+        df_final = df_final[actual_cols]
 
-# 4. 에너지 : WTI 가격 -> 발주 모멘텀 (유가 lag)
-wti = yf.Ticker('CL=F')
-wti = wti.history(start=start_date, end=end_date)
-wti = wti['Close'].reset_index()
-
-# 날짜 형식 통일 (타임존 제거 및 날짜만 추출)
-wti['Date'] = pd.to_datetime(wti['Date']).dt.tz_localize(None)
-
-# 시간 정보를 제외하고 '연-월-일' 형식만 남기기
-wti['Date'] = wti['Date'].dt.normalize()
-# wti.to_csv('CL=F.csv', index=False)
-
-# 발주 모멘텀 (유가 lag) 지표 생성
-# 3개월(약 60영업일)과 6개월(약 120영업일) 시차를 적용하여 선행성 확보
-wti['wti_lag60'] = wti['Close'].shift(60) # 3개월 전 추세
-wti['wti_lag120'] = wti['Close'].shift(120) # 6개월 전 추세
-
-# 데이터 통합 (df_merged + wti)
-df_merged = pd.merge(df_merged, wti[['Date', 'wti_lag60', 'wti_lag120']], on='Date', how='left')
-df_merged = df_merged.ffill() # 결측치 처리
-
-# 5. 정책 : 국방 예산 / 에너지 정책 -> 테마 (정부 발표나 뉴스로 정책 더미)
-# TODO: 뉴스 기사?
-
-# 6. 상대 : KRX 기계장비 / 조선 지수 -> 상대 강도 (Z-score)
-# KODEX 기계장비 ETF
-KODEXmach = fdr.DataReader('102960', start_date, end_date)
-KODEXmach = KODEXmach['Close']
-KODEXmach = KODEXmach.reset_index()
-KODEXmach.columns = ['Date', 'Close']
-# KODEXmach.to_csv('KODEXmach.csv', index=False)
-
-# 데이터 통합 (df_merged + KODEXmach)
-df_merged = pd.merge(df_merged, KODEXmach, on='Date', how='left', suffixes=('', '_kodexmach'))
-
-# 상대 가격(Relative Price) 산출
-df_merged['rel_price'] = df_merged['Close'] / df_merged['Close_kodexmach']
-
-# 120일 Rolling 평균 및 표준편차 산출
-df_merged['rel_price_mean'] = df_merged['rel_price'].rolling(window=120).mean()
-df_merged['rel_price_std'] = df_merged['rel_price'].rolling(window=120).std()
-
-# 최종 산업 Z-score 계산
-df_merged['z_score'] = (df_merged['rel_price'] - df_merged['rel_price_mean']) / df_merged['rel_price_std']
+        df_final.to_csv('heavy_ind_processed.csv', index=False, encoding='utf-8-sig')
+        print(f"✅ 흐름 유지 및 NaN 방어 완료: heavy_ind_processed.csv (총 {len(df_final)}행)")
+        print(df_final.head(10))
