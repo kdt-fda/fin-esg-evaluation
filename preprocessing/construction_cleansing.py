@@ -1,82 +1,211 @@
+import os
 import FinanceDataReader as fdr
-import pandas_datareader.data as web
+import yfinance as yf
 import pandas as pd
+import numpy as np
+import requests
+from dotenv import load_dotenv
 
-start_date = '2023-01-01'
-end_date = '2025-12-31'
+# ============================================================
+# [SECTION 1] 설정 및 기간 확장
+# ============================================================
+load_dotenv()
+USER_START_DATE = '2023-01-01'
+END_DATE = '2025-12-31'
+FETCH_START_DATE = '2021-01-01'
+START_YM = '202101'
 
-# 종목 데이터 불러오기 및 통합
-df_2023 = pd.read_csv('stock_data_2023.csv')
-df_2024 = pd.read_csv('stock_data_2024.csv')
-df_2025 = pd.read_csv('stock_data_2025.csv')
-df_merged = pd.concat([df_2023, df_2024, df_2025])
+CONS_STOCKS = {
+    '삼성물산': '028260', '현대건설': '000720', '삼성E&A': '028050',
+    '한전기술': '052690', 'KCC': '002380', '대우건설': '047040',
+    'DL이앤씨': '375500', 'GS건설': '006360', '한일시멘트': '300720', 'DL': '000210'
+}
 
-cons = ['삼성물산', '현대건설', '삼성E&A', '한전기술', 'KCC',
-        '대우건설', 'DL이앤씨', 'GS건설', '한일시멘트', 'DL']
+# ============================================================
+# [SECTION 2] Helper 함수
+# ============================================================
+class EcosClient:
+    BASE_URL = "https://ecos.bok.or.kr/api"
+    def __init__(self):
+        self.api_key = os.getenv("ECOS_API_KEY")
 
-df_merged["Date"] = pd.to_datetime(df_merged["Date"], format="%Y.%m.%d")
+    def fetch_data(self, stat_code, start, end, *item_codes, cycle="M", lang="kr"):
+        item_path = "/".join(item_codes) if item_codes else ""
+        url = f"{self.BASE_URL}/StatisticSearch/{self.api_key}/json/{lang}/1/500/{stat_code}/{cycle}/{start}/{end}"
+        if item_path:
+            url += f"/{item_path}"
 
-df_merged = df_merged[df_merged["Stock_Name"].isin(cons)]
+        try:
+            resp = requests.get(url).json()
+            rows = resp.get("StatisticSearch", {}).get("row", [])
+            if not rows:
+                return pd.DataFrame({'Date': pd.to_datetime([]), 'Value': pd.Series(dtype='float64')})
 
-# 건설 추가 파생 지표
-# 1. 금리 : 국고채 10년물 금리 -> 자금 비용 (금리 변화)
-kr10yt = fdr.DataReader('INVESTING:KR10YT=RR', start_date, end_date)
-kr10yt = kr10yt['Close']
-kr10yt = kr10yt.reset_index()
-kr10yt.columns = ['Date', 'Close']
-# kr10yt.to_csv('KR10YT.csv', index=False)
+            df = pd.DataFrame(rows)
+            df['Date'] = pd.to_datetime(df['TIME'], format='%Y%m').dt.normalize()
+            df['Value'] = pd.to_numeric(df['DATA_VALUE'])
+            return df[['Date', 'Value']].sort_values('Date').drop_duplicates('Date')
+        except Exception:
+            return pd.DataFrame({'Date': pd.to_datetime([]), 'Value': pd.Series(dtype='float64')})
 
-# 금리 변화율(Percentage Change) 계산
-kr10yt['kr10yt_change'] = kr10yt['Close'].pct_change()
+def safe_fetch_fdr(ticker, start, end, col_name='Close'):
+    try:
+        df = fdr.DataReader(ticker, start, end)
+        if df is None or df.empty:
+            return pd.DataFrame({'Date': pd.to_datetime([]), col_name: pd.Series(dtype='float64')})
+        df = df.reset_index()
+        df.columns = [c.capitalize() if c.lower() == 'date' else c for c in df.columns]
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
+        val_col = 'Close' if 'Close' in df.columns else df.columns[1]
+        df = df[['Date', val_col]].rename(columns={val_col: col_name})
+        return df.sort_values('Date').drop_duplicates('Date')
+    except:
+        return pd.DataFrame({'Date': pd.to_datetime([]), col_name: pd.Series(dtype='float64')})
 
-# 추가 지표: 금리 변화의 방향성 (Momentum)
-kr10yt['kr10yt_diff'] = kr10yt['kr10yt_change'].diff()
+def safe_fetch_yf(ticker, start, end, col_name):
+    try:
+        data = yf.download(ticker, start=start, end=end, progress=False)
+        if data.empty:
+            return pd.DataFrame({'Date': pd.to_datetime([]), col_name: pd.Series(dtype='float64')})
+        if isinstance(data.columns, pd.MultiIndex):
+            df = data['Close'].iloc[:, 0].reset_index()
+        else:
+            df = data['Close'].reset_index()
+        df.columns = ['Date', col_name]
+        df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None).dt.normalize()
+        return df
+    except:
+        return pd.DataFrame({'Date': pd.to_datetime([]), col_name: pd.Series(dtype='float64')})
 
-# 2. 경기 : 건설업 PMI / 제조업 PMI -> 투자 수요 (PMI_lag)
-# 건설업 PMI 업황실적BSI 대체
-# 제조업 산업 생산 지수
-ipman = web.DataReader('IPMAN', 'fred', start_date, end_date)
-ipman = ipman.reset_index()
-ipman = ipman.rename(columns={'DATE': 'Date'})
-ipman['Date'] = pd.to_datetime(ipman['Date'])
-# ipman.to_csv('IPMAN.csv', index=False)
+# ============================================================
+# [SECTION 3] 데이터 수집 및 통합
+# ============================================================
+def fetch_construction_data():
+    ecos = EcosClient()
 
-# TODO: 건설업 업황실적 BSI (국내 데이터)
-# 한국은행 경제통계시스템(ECOS) API 등을 통해 가져온 '건설업 업황실적' 데이터라고 가정합니다.
+    stock_list = []
+    for name, ticker in CONS_STOCKS.items():
+        print(f"📡 {name}({ticker}) 주가 데이터 수집 중...")
+        df = safe_fetch_fdr(ticker, FETCH_START_DATE, END_DATE, 'Close')
+        if not df.empty:
+            df['Ticker'], df['Stock_Name'] = ticker, name
+            stock_list.append(df)
+    if not stock_list:
+        return pd.DataFrame()
+    full_stocks = pd.concat(stock_list).reset_index(drop=True)
 
-df_merged = pd.merge(ipman, bsi, left_index=True, right_on='Date', how='inner')
+    print("📡 ECOS 건설업 업황실적BSI(AA/F4100) 및 제조업 지수 수집 중...")
+    bsi_df = ecos.fetch_data('512Y007', START_YM, '202512', 'AA', 'F4100')
+    mfg_df = ecos.fetch_data('901Y032', START_YM, '202512', 'I11AC')
 
-# 투자 수요 지표 (PMI_lag) 산출 로직
-# 건설업은 수주 후 착공까지 시차가 발생하므로 1~3개월 Lag를 적용합니다.
-df_merged['IPMAN_lag3'] = df_merged['IPMAN'].shift(3) # 3개월 선행 지표화
-df_merged['BSI_lag1'] = df_merged['BSI'].shift(1) # 1개월 선행 지표화
+    print("📡 원/달러 환율 및 국채 금리 수집 중...")
+    usd_krw = safe_fetch_yf('USDKRW=X', FETCH_START_DATE, END_DATE, 'USD_KRW')
+    kr10yt = safe_fetch_fdr('INVESTING:KR10YT=RR', FETCH_START_DATE, END_DATE, 'KR10YT_Close')
+    tiger_cons = safe_fetch_fdr('139220', FETCH_START_DATE, END_DATE, 'TigerCons_Close')
 
-# 최종 투자 수요 지표 생성 (제조업 경기와 건설 업황의 조화)
-# 두 지표를 가중 평균하거나, 단순히 결합하여 새로운 '투자 수요' 변수를 만듭니다.
-df_merged['Investment_Demand'] = (df_merged['IPMAN_lag3'] * 0.6) + (df_merged['BSI_lag1'] * 0.4)
+    def force_fix_type(df):
+        df = df.copy()
+        if 'Date' not in df.columns or df['Date'].empty:
+            df['Date'] = pd.to_datetime(df['Date'])
+        df['Date'] = pd.to_datetime(df['Date']).dt.tz_localize(None).dt.normalize()
+        df['Date'] = df['Date'].astype('datetime64[ns]')
+        return df.sort_values('Date').reset_index(drop=True)
 
-# 3. 수주 : 해외건설 수주액 통계 -> 이벤트 (수주 더미/뉴스)
-# TODO: 뉴스 기사로 처리?
+    full_stocks = force_fix_type(full_stocks)
+    usd_krw, kr10yt, tiger_cons = [force_fix_type(d) for d in [usd_krw, kr10yt, tiger_cons]]
+    bsi_df, mfg_df = force_fix_type(bsi_df), force_fix_type(mfg_df)
 
-# 4. 원가 : 시멘트/철강 PPI -> 마진 (원자재 변화)
-# 가져옴 Cem_Ste_PPI
+    # ---- 핵심 수정(제안 1번): 포인트 변화(diff) + 표준화(z-score) ----
+    # 월별 bsi_df에서 3개월 포인트 변화 계산
+    if not bsi_df.empty:
+        bsi_df['bsi_diff_3m'] = bsi_df['Value'].diff(3)
 
-# 5. 상대 : 산업 Z-score
-# TIGER 200 건설 ETF
-TIGERcons = fdr.DataReader('139220', start_date, end_date)
-TIGERcons = TIGERcons['Close']
-TIGERcons = TIGERcons.reset_index()
-# TIGERcons.to_csv('TIGERcons.csv', index=False)
+        # 12개월(=12행) 롤링으로 표준화 (min_periods는 6으로 완화)
+        roll = bsi_df['bsi_diff_3m'].rolling(12, min_periods=6)
+        bsi_df['bsi_diff_3m_z'] = (bsi_df['bsi_diff_3m'] - roll.mean()) / (roll.std() + 1e-9)
 
-# 데이터 통합 (종목 데이터 + TIGERcons)
-df_merged = pd.merge(df_merged, TIGERcons, on='Date', how='left', suffixes=('', '_tigercons'))
+    merged = pd.merge_asof(full_stocks, usd_krw, on='Date', direction='backward', tolerance=pd.Timedelta('2D'))
+    merged = pd.merge_asof(merged, kr10yt, on='Date', direction='backward', tolerance=pd.Timedelta('2D'))
+    merged = pd.merge(merged, tiger_cons, on='Date', how='left')
 
-# 상대 가격(Relative Price) 산출
-df_merged['rel_price'] = df_merged['Close'] / df_merged['Close_tigercons']
+    # cons_bsi 레벨 + bsi_diff_3m_z(표준화된 포인트 변화) 붙이기
+    if not bsi_df.empty:
+        merged = pd.merge_asof(
+            merged.sort_values('Date'),
+            bsi_df[['Date', 'Value', 'bsi_diff_3m_z']].rename(columns={'Value': 'cons_bsi', 'bsi_diff_3m_z': 'bsi_momentum'}),
+            on='Date',
+            direction='backward'
+        )
 
-# 120일 Rolling 평균 및 표준편차 산출
-df_merged['rel_price_mean'] = df_merged['rel_price'].rolling(window=120).mean()
-df_merged['rel_price_std'] = df_merged['rel_price'].rolling(window=120).std()
+    if not mfg_df.empty:
+        merged = pd.merge_asof(
+            merged.sort_values('Date'),
+            mfg_df.rename(columns={'Value': 'mfg_idx'})[['Date', 'mfg_idx']],
+            on='Date',
+            direction='backward'
+        )
 
-# 최종 산업 Z-score 계산 (최근 120일 평균 대비 표준편차 산출)
-df_merged['z_score'] = (df_merged['rel_price'] - df_merged['rel_price_mean']) / df_merged['rel_price_std']
+    fill_cols = ['USD_KRW', 'KR10YT_Close', 'TigerCons_Close', 'cons_bsi', 'bsi_momentum', 'mfg_idx']
+    fill_cols = [c for c in fill_cols if c in merged.columns]
+
+    merged = merged.sort_values(['Stock_Name', 'Date'])
+    if fill_cols:
+        merged[fill_cols] = merged.groupby('Stock_Name')[fill_cols].ffill().bfill()
+
+    return merged
+
+# ============================================================
+# [SECTION 4] 파생 지표 계산
+# ============================================================
+def calculate_cons_metrics(group):
+    group = group.sort_values('Date')
+    s_ret = group['Close'].pct_change()
+
+    if 'KR10YT_Close' in group.columns:
+        i_ret = group['KR10YT_Close'].pct_change()
+        group['interest_beta'] = s_ret.rolling(60, min_periods=30).cov(i_ret) / (i_ret.rolling(60, min_periods=30).var() + 1e-10)
+
+    if 'USD_KRW' in group.columns:
+        u_ret = group['USD_KRW'].pct_change()
+        group['fx_correlation'] = s_ret.rolling(60, min_periods=30).corr(u_ret)
+
+    # bsi_momentum는 병합 단계에서 이미 월단위(diff->z-score)로 계산됨 (재계산 X)
+
+    if 'mfg_idx' in group.columns:
+        group['mfg_lag3'] = group['mfg_idx'].shift(60)
+
+    if 'TigerCons_Close' in group.columns:
+        rel_price = group['Close'] / (group['TigerCons_Close'] + 1e-9)
+        group['z_score'] = (rel_price - rel_price.rolling(120, min_periods=30).mean()) / (rel_price.rolling(120, min_periods=30).std() + 1e-9)
+
+    return group
+
+# ============================================================
+# [SECTION 5] 실행 및 저장
+# ============================================================
+if __name__ == "__main__":
+    df_raw = fetch_construction_data()
+
+    if not df_raw.empty:
+        print("🚀 건설 섹터 파생 지표 산출 중...")
+        df_processed = df_raw.groupby('Stock_Name', group_keys=False).apply(calculate_cons_metrics, include_groups=False)
+
+        df_processed['Stock_Name'] = df_raw.sort_values(['Stock_Name', 'Date'])['Stock_Name'].values
+        df_processed['Ticker'] = df_raw.sort_values(['Stock_Name', 'Date'])['Ticker'].values
+
+        df_processed = df_processed.sort_values(['Stock_Name', 'Date']).reset_index(drop=True)
+        df_final = df_processed[df_processed['Date'] >= USER_START_DATE].copy()
+
+        print("-" * 30)
+        if 'bsi_momentum' in df_final.columns:
+            print(f"📊 bsi_momentum 데이터 수: {df_final['bsi_momentum'].count()} 건")
+        else:
+            print("⚠️ bsi_momentum 컬럼이 생성되지 않았습니다.")
+
+        final_cols = ['Date', 'Ticker', 'Stock_Name', 'Close', 'interest_beta', 'fx_correlation', 'bsi_momentum', 'mfg_lag3', 'z_score']
+        actual_cols = [c for c in final_cols if c in df_final.columns]
+        df_final = df_final[actual_cols]
+
+        df_final.to_csv('construction_processed.csv', index=False, encoding='utf-8-sig')
+        print("✅ 오류 해결 및 전처리 완료: construction_processed.csv")
+        print(df_final.head(10))
