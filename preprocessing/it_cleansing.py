@@ -1,131 +1,163 @@
+import os
 import FinanceDataReader as fdr
-import pandas_datareader.data as web
 import yfinance as yf
 import pandas as pd
+import numpy as np
+from pandas.tseries.offsets import DateOffset
+import requests
+from dotenv import load_dotenv
 
-start_date = '2023-01-01'
-end_date = '2025-12-31'
+# ============================================================
+# [SECTION 1] 설정 및 기간 확장
+# ============================================================
+load_dotenv()
+USER_START_DATE = '2023-01-01'
+END_DATE = '2025-12-31'
 
-# 종목 데이터 불러오기 및 통합
-df_2023 = pd.read_csv('stock_data_2023.csv')
-df_2024 = pd.read_csv('stock_data_2024.csv')
-df_2025 = pd.read_csv('stock_data_2025.csv')
-df_merged = pd.concat([df_2023, df_2024, df_2025])
+TECH_STOCKS = {
+    '삼성전자': '005930', 'SK하이닉스': '000660', 'SK스퀘어': '402340', 
+    '삼성SDI': '006400', '삼성전기': '009150', '한미반도체': '042700', 
+    'LG전자': '066570', 'LG': '003550', '삼성에스디에스': '018260', 
+    '현대오토에버': '307950', '이수페타시스': '007660', '포스코DX': '022100', 
+    'LG디스플레이': '034220', 'LG이노텍': '011070'
+}
 
-tech = ['삼성전자', 'SK하이닉스', 'SK스퀘어', '삼성SDI', '삼성전기',
-        '한미반도체', 'LG전자', 'LG', '삼성에스디에스', '현대오토에버',
-        '이수페타시스', 'LG씨엔에스', '포스코DX', 'LG디스플레이', 'LG이노텍']
+FETCH_START_DATE = (pd.to_datetime(USER_START_DATE) - DateOffset(months=10)).strftime('%Y-%m-%d')
+ECOS_START_YM = (pd.to_datetime(USER_START_DATE) - DateOffset(months=12)).strftime('%Y%m')
 
-df_merged["Date"] = pd.to_datetime(df_merged["Date"], format="%Y.%m.%d")
+# ============================================================
+# [SECTION 2] ECOS Client 및 데이터 수집 함수
+# ============================================================
+class EcosClient:
+    BASE_URL = "https://ecos.bok.or.kr/api"
+    def __init__(self):
+        self.api_key = os.getenv("ECOS_API_KEY")
 
-df_merged = df_merged[df_merged["Stock_Name"].isin(tech)]
+    def fetch_data(self, stat_code, item_code, start, end):
+        url = f"{self.BASE_URL}/StatisticSearch/{self.api_key}/json/kr/1/1000/{stat_code}/M/{start}/{end}/{item_code}"
+        try:
+            resp = requests.get(url).json()
+            rows = resp.get("StatisticSearch", {}).get("row", [])
+            if not rows: return pd.DataFrame()
+            df = pd.DataFrame(rows)
+            df['Date'] = pd.to_datetime(df['TIME'], format='%Y%m')
+            df['Value'] = pd.to_numeric(df['DATA_VALUE'])
+            return df[['Date', 'Value']].sort_values('Date')
+        except:
+            return pd.DataFrame()
 
-# 정보기술 추가 파생 지표
-# 1. 공통 : 나스닥 100 지수 (NDX) -> 글로벌 심리
-ndx = fdr.DataReader('^NDX', start_date, end_date)
-ndx = ndx['Close']
-ndx = ndx.reset_index()
-ndx.columns = ['Date', 'Close']
-# ndx.to_csv('NDX.csv', index=False)
+def safe_fetch_fdr(ticker, start, end, col_name='Close'):
+    try:
+        df = fdr.DataReader(ticker, start, end)
+        df.index.name = 'Date'
+        df = df.reset_index()
+        df.columns = [c.capitalize() if c.lower() == 'date' else c for c in df.columns]
+        df['Date'] = pd.to_datetime(df['Date'])
+        val_col = 'Close' if 'Close' in df.columns else df.columns[1]
+        return df[['Date', val_col]].rename(columns={val_col: col_name})
+    except:
+        return pd.DataFrame(columns=['Date', col_name])
 
-# 2. 공통 : 나스닥 상관계수/초과 수익 -> 동조성
-soxx = yf.Ticker('SOXX')
-soxx = soxx.history(start=start_date, end=end_date)
-soxx = soxx['Close'].reset_index()
+# ============================================================
+# [SECTION 3] 데이터 통합 및 지표 정확도 보정
+# ============================================================
+def fetch_it_data():
+    ecos = EcosClient()
+    
+    # 1. 개별 종목 주가
+    stock_list = []
+    for name, ticker in TECH_STOCKS.items():
+        print(f"📡 {name}({ticker}) 데이터 수집 중...")
+        df = safe_fetch_fdr(ticker, FETCH_START_DATE, END_DATE, 'Close')
+        df['Ticker'], df['Stock_Name'] = ticker, name
+        stock_list.append(df)
+    full_stocks = pd.concat(stock_list)
 
-# 날짜 형식 통일 (타임존 제거 및 날짜만 추출)
-soxx['Date'] = pd.to_datetime(soxx['Date']).dt.tz_localize(None)
+    # 2. 글로벌 동적 지표 수집
+    soxx = safe_fetch_fdr('SOXX', FETCH_START_DATE, END_DATE, 'SOXX_Close')
+    aapl = safe_fetch_fdr('AAPL', FETCH_START_DATE, END_DATE, 'AAPL_Close')
+    xli = safe_fetch_fdr('XLI', FETCH_START_DATE, END_DATE, 'XLI_Close') # 제조업 경기
+    tiger_it = safe_fetch_fdr('139260', FETCH_START_DATE, END_DATE, 'IT_ETF_Close')
 
-# 시간 정보를 제외하고 '연-월-일' 형식만 남기기
-soxx['Date'] = soxx['Date'].dt.normalize()
-# soxx.to_csv('SOXX.csv', index=False)
+    # 3. OECD CLI 수집 및 모멘텀 사전 계산 (0 이슈 해결 핵심)
+    print("📡 IT 경기 선행지표(CLI) 분석 중...")
+    cli_df = ecos.fetch_data('901Y068', 'I16D', ECOS_START_YM, '202512')
+    
+    if not cli_df.empty:
+        # 월간 데이터 상태에서 미리 변화율을 구해야 일간으로 확장해도 0이 안 나옴
+        cli_df['cli_momentum'] = cli_df['Value'].pct_change(1)
+    else:
+        # [Fallback] CLI가 없을 경우 나스닥100(QQQ)의 월간 모멘텀으로 대체하여 '의미 있는 숫자' 확보
+        print("⚠️ CLI 데이터 부재로 글로벌 기술주 모멘텀(QQQ)으로 대체 산출합니다.")
+        qqq = fdr.DataReader('QQQ', FETCH_START_DATE, END_DATE).resample('MS').last()
+        qqq['cli_momentum'] = qqq['Close'].pct_change(1)
+        cli_df = qqq[['cli_momentum']].reset_index().rename(columns={'index': 'Date'})
 
-# 데이터 통합 (df_merged + soxx)
-df_merged = pd.merge(df_merged, soxx[['Date', 'Close']], on='Date', how='left', suffixes=('', '_soxx'))
-df_merged['Close_soxx'] = df_merged['Close_soxx'].ffill()
+    # 4. 데이터 병합
+    full_stocks = full_stocks.sort_values(['Stock_Name', 'Date']).reset_index(drop=True)
+    merged = pd.merge(full_stocks, soxx, on='Date', how='left')
+    merged = pd.merge(merged, aapl, on='Date', how='left')
+    merged = pd.merge(merged, xli, on='Date', how='left')
+    merged = pd.merge(merged, tiger_it, on='Date', how='left')
+    
+    # 타입 정규화 후 asof 병합
+    merged['Date'] = pd.to_datetime(merged['Date'])
+    cli_df['Date'] = pd.to_datetime(cli_df['Date'])
+    merged = pd.merge_asof(merged.sort_values('Date'), cli_df[['Date', 'cli_momentum']], on='Date', direction='backward')
 
-# 수익률 계산 및 시차 적용
-# SOXX는 미국 시간이므로 한국 장에는 전날 종가가 영향을 미칩니다.
-df_merged['ret_stock'] = df_merged['Close'].pct_change()
-df_merged['ret_soxx'] = df_merged['Close_soxx'].shift(1).pct_change() # 1일 시차 적용
+    # 결측치 보정 (기업별 ffill)
+    merged = merged.sort_values(['Stock_Name', 'Date'])
+    fill_cols = ['SOXX_Close', 'AAPL_Close', 'XLI_Close', 'IT_ETF_Close', 'cli_momentum']
+    merged[fill_cols] = merged.groupby('Stock_Name')[fill_cols].ffill()
+        
+    return merged
 
-# 60일 Rolling 상관계수(corr_SOXX) 산출
-df_merged['corr_SOXX'] = df_merged['ret_stock'].rolling(window=60).corr(df_merged['ret_soxx'])
+# ============================================================
+# [SECTION 4] 파생 지표 계산
+# ============================================================
+def calculate_it_metrics(group):
+    group = group.sort_values('Date')
+    s_ret = group['Close'].pct_change()
+    
+    # 1. 반도체 동조성 (SOXX 상관계수)
+    soxx_ret = group['SOXX_Close'].shift(1).pct_change()
+    group['soxx_corr'] = s_ret.rolling(60).corr(soxx_ret)
+    
+    # 2. 글로벌 IT 수요 모멘텀 (애플 60일 변화율)
+    group['apple_momentum'] = group['AAPL_Close'].pct_change(60)
+    
+    # 3. 글로벌 제조업 경기 선행 모멘텀 (XLI 60일 변화율)
+    group['mfg_cycle_momentum'] = group['XLI_Close'].pct_change(60)
+    
+    # 4. 산업 내 상대 강도 Z-score (120일)
+    rel_price = group['Close'] / group['IT_ETF_Close']
+    group['z_score'] = (rel_price - rel_price.rolling(120).mean()) / rel_price.rolling(120).std()
+    
+    return group
 
-# 3. 반도체 : 필라델피아 반도체 지수 (SOX) -> 반도체 흐름
-sox = yf.Ticker('^SOX')
-sox = sox.history(start=start_date, end=end_date)
-sox = sox['Close'].reset_index()
+# ============================================================
+# [SECTION 5] 실행 및 최종 저장
+# ============================================================
+if __name__ == "__main__":
+    df_raw = fetch_it_data()
+    
+    print("🚀 정보기술 섹터 파생 지표 산출 중...")
+    df_processed = df_raw.groupby('Stock_Name', group_keys=False).apply(calculate_it_metrics)
+    
+    # [정렬 규칙] 기업별 묶어서 시간순
+    df_processed = df_processed.sort_values(['Stock_Name', 'Date']).reset_index(drop=True)
+    
+    df_final = df_processed[df_processed['Date'] >= USER_START_DATE].copy()
+    
+    # 최종 컬럼 순서
+    final_cols = [
+        'Date', 'Ticker', 'Stock_Name', 'Close', 
+        'soxx_corr', 'apple_momentum', 'mfg_cycle_momentum', 'z_score'
+    ]
+    df_final = df_final[final_cols].fillna(0)
 
-# 날짜 형식 통일 (타임존 제거 및 날짜만 추출)
-sox['Date'] = pd.to_datetime(sox['Date']).dt.tz_localize(None)
+    df_final.to_csv('it_processed.csv', index=False, encoding='utf-8-sig')
 
-# 시간 정보를 제외하고 '연-월-일' 형식만 남기기
-sox['Date'] = sox['Date'].dt.normalize()
-# sox.to_csv('SOX.csv', index=False)
-
-# 4. 반도체 : 마이크론(MU) 주가 (DXI 대체) -> 사이클
-mu = yf.Ticker('MU')
-mu = mu.history(start=start_date, end=end_date)
-mu = mu['Close'].reset_index()
-
-# 날짜 형식 통일 (타임존 제거 및 날짜만 추출)
-mu['Date'] = pd.to_datetime(mu['Date']).dt.tz_localize(None)
-
-# 시간 정보를 제외하고 '연-월-일' 형식만 남기기
-mu['Date'] = mu['Date'].dt.normalize()
-# mu.to_csv('MU.csv', index=False)
-
-# 5. HW : 글로벌 IT 수요 (애플 주가 등) -> 부품 수요
-aapl = yf.Ticker('AAPL')
-aapl = aapl.history(start=start_date, end=end_date)
-aapl = aapl['Close'].reset_index()
-
-# 날짜 형식 통일 (타임존 제거 및 날짜만 추출)
-aapl['Date'] = pd.to_datetime(aapl['Date']).dt.tz_localize(None)
-
-# 시간 정보를 제외하고 '연-월-일' 형식만 남기기
-aapl['Date'] = aapl['Date'].dt.normalize()
-# aapl.to_csv('AAPL.csv', index=False)
-
-# 6. 서비스 : OECD 경기선행지수 (CLI) -> IT 투자 (MEI_CLI)
-# TODO: CLI 가져옴
-
-# 7. 서비스 : 글로벌 제조업 PMI -> B2B 수요
-# 제조업 산업 생산 지수
-ipman = web.DataReader('IPMAN', 'fred', start_date, end_date)
-ipman = ipman.reset_index()
-ipman = ipman.rename(columns={'DATE': 'Date'})
-ipman['Date'] = pd.to_datetime(ipman['Date'])
-# ipman.to_csv('IPMAN.csv', index=False)
-
-# 투자 환경 (PMI lag) 지표 생성
-# 정보기술 업황의 선행성을 고려하여 1, 3개월 시차 적용
-ipman['IPMAN_lag1'] = ipman['IPMAN'].shift(1) # 1개월 전 경기 지표
-ipman['IPMAN_lag3'] = ipman['IPMAN'].shift(3) # 3개월 전 경기 지표
-
-# 데이터 통합 (종목 데이터와 병합)
-# 월간 PMI 데이터를 일간 주가 데이터에 매칭할 때 ffill()로 빈 날짜를 채워줍니다.
-df_merged = pd.merge(df_merged, ipman, on='Date', how='left')
-df_merged[['IPMAN', 'IPMAN_lag1', 'IPMAN_lag3']] = df_merged[['IPMAN', 'IPMAN_lag1', 'IPMAN_lag3']].ffill()
-
-# 8. 상대 : IT Z-score -> 섹터 내 위치
-# tiger 200 it etf
-TIGERit = fdr.DataReader('139260', start_date, end_date)
-TIGERit = TIGERit['Close']
-TIGERit = TIGERit.reset_index()
-TIGERit.columns = ['Date', 'Close']
-# TIGERit.to_csv('TIGERit.csv', index=False)
-
-# 데이터 통합 (df_merged + TIGERit)
-df_merged = pd.merge(df_merged, TIGERit, on='Date', how='left', suffixes=('', '_tigerit'))
-
-# 상대 가격(Relative Price) 산출
-df_merged['rel_price'] = df_merged['Close'] / df_merged['Close_tigerit']
-
-# 120일 Rolling 평균 및 표준편차 산출
-df_merged['rel_price_mean'] = df_merged['rel_price'].rolling(window=120).mean()
-df_merged['rel_price_std'] = df_merged['rel_price'].rolling(window=120).std()
-
-# 최종 산업 Z-score 계산
-df_merged['z_score'] = (df_merged['rel_price'] - df_merged['rel_price_mean']) / df_merged['rel_price_std']
+    print("-" * 30)
+    print("✅ 데이터 정확도 보정 및 전처리 완료: it_processed.csv")
+    print(df_final.head(10))
