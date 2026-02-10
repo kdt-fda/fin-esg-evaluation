@@ -142,5 +142,5 @@ if __name__ == "__main__":
     df_final.to_csv(output_filename, index=False, encoding='utf-8-sig')
 
     print("-" * 30)
-    print(f"✅ 기업별 묶음 정렬 및 금융 전처리 완료: {output_filename}")
+    print(f"✅ 금융 파생 지표 전처리 및 통합 완료: {output_filename}")
     print(df_final.head(10))
