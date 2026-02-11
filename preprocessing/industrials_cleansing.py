@@ -145,24 +145,28 @@ def calculate_industrials_metrics(group):
         v_market = k_ret.rolling(20, min_periods=15).std()
         group['vol_ratio'] = v_stock / (v_market + 1e-10)
     
-    # 2. 물류 수요 모멘텀 (해운 BSI 기반)
+    # 2. [수정] 물류 수요 모멘텀 (실제 3개월 시계열 기준)
     if 'sea_bsi' in group.columns:
-        group['logistics_momentum'] = group['sea_bsi'].pct_change(3)
+        # 행 기준 3이 아니라, 영업일 기준 60일(약 3개월) 전의 BSI와 비교
+        group['logistics_momentum'] = group['sea_bsi'].pct_change(60)
     
-    # 3. [추가] 원자재 교역 물동량 Lag (BSI 대체 지표 활용)
-    # 산업재 물동량의 선행성을 분석하기 위해 3개월(60영업일) 시차 적용
+    # 3. 원자재 교역 물동량 Lag (3개월 전 물동량이 현재 주가에 미치는 영향)
     if 'ship_vol_idx' in group.columns:
+        # 이미 60일 shift로 잘 구현되어 있음
         group['ship_vol_lag3'] = group['ship_vol_idx'].shift(60)
 
     # 4. 제조업 지수 시차 (ECOS)
     if 'mfg_idx' in group.columns:
+        # 60일(3개월), 120일(6개월) 전 지수를 현재 행에 매칭
         group['mfg_lag3'] = group['mfg_idx'].shift(60)
         group['mfg_lag6'] = group['mfg_idx'].shift(120)
         
     # 5. 산업 내 상대 강도 Z-score (120일)
     if 'TigerIG_Close' in group.columns:
         rel_price = group['Close'] / (group['TigerIG_Close'] + 1e-9)
-        group['z_score'] = (rel_price - rel_price.rolling(120, min_periods=30).mean()) / (rel_price.rolling(120, min_periods=30).std() + 1e-9)
+        # 120일 이동평균과 표준편차를 활용한 표준화
+        group['z_score'] = (rel_price - rel_price.rolling(120, min_periods=30).mean()) / \
+                           (rel_price.rolling(120, min_periods=30).std() + 1e-9)
     
     return group
 
