@@ -38,10 +38,10 @@ class EcosClient:
             return {}
 
     def fetch_cli_data(self, start, end):
-        """선행지수 순환변동치(901Y068 - I16E) 직접 수집"""
-        # 통계표: 901Y068 (경기종합지수), 아이템: I16E (선행지수 순환변동치)
+        """선행지수 순환변동치(901Y067 - I16E) 직접 수집"""
+        # 통계표: 901Y067 (경기종합지수), 아이템: I16E (선행지수 순환변동치)
         # 안정성을 위해 검색 로직 대신 검증된 코드를 직접 사용합니다.
-        path = [1, 1000, "901Y068", "M", start, end, "I16E"]
+        path = [1, 1000, "901Y067", "M", start, end, "I16E"]
         data = self._request("StatisticSearch", *path)
         rows = data.get("StatisticSearch", {}).get("row", [])
         
