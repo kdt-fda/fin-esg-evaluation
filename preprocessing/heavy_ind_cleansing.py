@@ -122,26 +122,31 @@ def calculate_heavy_metrics(group):
     group = group.sort_values('Date')
     s_ret = group['Close'].pct_change()
     
-    # 1. 환율 민감도 (FX Beta) - 가격이 ffill된 상태라 NaN 없이 계산됨
+    # 1. 환율 민감도 (FX Beta) - 60일 윈도우
     if 'USD_KRW' in group.columns:
         u_ret = group['USD_KRW'].pct_change()
-        group['fx_beta'] = s_ret.rolling(60, min_periods=30).cov(u_ret) / (u_ret.rolling(60, min_periods=30).var() + 1e-10)
+        # 공분산/분산으로 베타 산출 (1.0보다 크면 환율 상승 시 주가 더 크게 상승)
+        group['fx_beta'] = group['Close'].pct_change(20).rolling(60).cov(group['USD_KRW'].pct_change(20)) / \
+                           (group['USD_KRW'].pct_change(20).rolling(60).var() + 1e-10)
     
-    # 2. 제조업 지수 모멘텀 및 Lag (ECOS)
+    # 2. [수정] 제조업 지수 모멘텀 (실제 시계열 기준)
     if 'mfg_idx' in group.columns:
-        group['mfg_momentum'] = group['mfg_idx'].pct_change(3) # 월간 기준 3개월 변화
-        group['mfg_lag3'] = group['mfg_idx'].shift(60) # 일간 기준 약 3개월 전 데이터
+        # 행 기준 3이 아니라, 영업일 기준 60일(약 3개월) 전의 지수와 비교해야 함
+        group['mfg_momentum'] = group['mfg_idx'].pct_change(60) 
+        # mfg_lag3는 이미 60일 shift로 잘 구현되어 있음
+        group['mfg_lag3'] = group['mfg_idx'].shift(60)
     
-    # 3. 에너지 발주 모멘텀 (WTI 추세)
+    # 3. 에너지 발주 모멘텀 (WTI 60일 이동평균의 변화율)
     if 'WTI_Close' in group.columns:
-        # min_periods 적용으로 데이터가 쌓이는 시점부터 즉시 산출
-        group['energy_momentum'] = group['WTI_Close'].rolling(60, min_periods=20).mean().pct_change(20)
+        wti_ma = group['WTI_Close'].rolling(60, min_periods=20).mean()
+        group['energy_momentum'] = wti_ma.pct_change(20)
     
     # 4. 산업 내 상대 강도 Z-score (120일)
     if 'Mach_Close' in group.columns:
         rel_price = group['Close'] / (group['Mach_Close'] + 1e-9)
-        # min_periods를 30으로 낮추어 신규 상장주 데이터 누락 방지
-        group['z_score'] = (rel_price - rel_price.rolling(120, min_periods=30).mean()) / (rel_price.rolling(120, min_periods=30).std() + 1e-9)
+        # 안정적인 흐름을 위해 120일 윈도우 사용
+        group['z_score'] = (rel_price - rel_price.rolling(120, min_periods=30).mean()) / \
+                           (rel_price.rolling(120, min_periods=30).std() + 1e-9)
     
     return group
 
