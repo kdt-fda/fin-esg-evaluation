@@ -188,4 +188,4 @@ if __name__ == "__main__":
         df_final.to_csv('cons_staples_processed.csv', index=False, encoding='utf-8-sig')
         print("-" * 30)
         print("✅ 생활소비재 전처리 완료 (CLI 제외): cons_staples_processed.csv")
-        print(df_final.head(5))
+        print(df_final.head(10))
