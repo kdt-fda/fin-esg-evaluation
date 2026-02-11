@@ -169,6 +169,10 @@ if __name__ == "__main__":
         df_processed = df_processed.sort_values(['Stock_Name', 'Date']).reset_index(drop=True)
         
         df_final = df_processed[df_processed['Date'] >= USER_START_DATE].copy()
+
+        final_cols = ['Date', 'Ticker', 'Stock_Name', 'Close', 'spread_momentum', 'mfg_lag3', 'mfg_lag6', 'oil_beta', 'z_score']
+        actual_cols = [c for c in final_cols if c in df_final.columns]
+        df_final = df_final[actual_cols]
         
         # 저장
         df_final.to_csv('ener_chem_processed.csv', index=False, encoding='utf-8-sig')
