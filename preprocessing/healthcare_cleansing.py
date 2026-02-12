@@ -31,7 +31,7 @@ def fetch_healthcare_data():
     macro_df = pd.merge(kospi200, tiger_hc, on='Date', how='outer').sort_values('Date').ffill()
     macro_df['Date'] = pd.to_datetime(macro_df['Date']).dt.normalize()
 
-    # 2. 재무 데이터 준비 (2022~2025)
+    # 2. 재무 데이터 준비 (2022 ~ 2025)
     funda_list = []
     for y in [2022, 2023, 2024, 2025]:
         for q in [1, 2, 3, 4]:
