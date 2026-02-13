@@ -26,18 +26,15 @@ def initialize_stock_db():
             
         # 테이블 생성
         tables = {
-            "DATE_TB": """
-                CREATE TABLE DATE_TB (
-                    trade_date DATE NOT NULL,
-                    PRIMARY KEY(trade_date)
-                );
-            """,
             "KOSPI200_STOCKS_TB": """
                 CREATE TABLE KOSPI200_STOCKS_TB (
                     ticker VARCHAR(10) NOT NULL,
                     stock_name VARCHAR(100),
+                    sector_code VARCHAR(10) NOT NULL,
                     is_active BOOLEAN DEFAULT TRUE,
-                    PRIMARY KEY(ticker)
+                    PRIMARY KEY(ticker),
+                    CONSTRAINT fk_stocks_sector
+                        FOREIGN KEY(sector_code) REFERENCES SECTOR_TB(sector_code)
                 );
             """,
             "SECTOR_TB": """
@@ -45,17 +42,6 @@ def initialize_stock_db():
                     sector_code VARCHAR(10) NOT NULL,
                     sector_name VARCHAR(100) NOT NULL,
                     PRIMARY KEY(sector_code)
-                );
-            """,
-            "STOCK_SECTOR_TB": """
-                CREATE TABLE STOCK_SECTOR_TB (
-                    ticker VARCHAR(10) NOT NULL,
-                    sector_code VARCHAR(10) NOT NULL,
-                    PRIMARY KEY(ticker),
-                    CONSTRAINT fk_ss_ticker
-                        FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker),
-                    CONSTRAINT fk_ss_sector
-                        FOREIGN KEY(sector_code) REFERENCES SECTOR_TB(sector_code)
                 );
             """,
             "STOCK_TB": """
@@ -86,8 +72,6 @@ def initialize_stock_db():
                     golden_cross_20_60 BOOLEAN,
                     death_cross_20_60 BOOLEAN,
                     PRIMARY KEY(trade_date, ticker),
-                    CONSTRAINT fk_stock_date
-                        FOREIGN KEY(trade_date) REFERENCES DATE_TB(trade_date),
                     CONSTRAINT fk_stock_ticker
                         FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                 );
@@ -124,9 +108,7 @@ def initialize_stock_db():
                     rate_diff_policy DECIMAL(8,4),
                     rate_diff_3y DECIMAL(8,4),
                     rate_diff_10y DECIMAL(8,4),
-                    PRIMARY KEY(trade_date),
-                    CONSTRAINT fk_macro_date
-                        FOREIGN KEY(trade_date) REFERENCES DATE_TB(trade_date)
+                    PRIMARY KEY(trade_date)
                 );
             """,
             "FUNDAMENTAL_TB": """
@@ -179,9 +161,7 @@ def initialize_stock_db():
                     cli_lag1 DECIMAL(10,2),
                     cli_lag3 DECIMAL(10,2),
                     cli_lag6 DECIMAL(10,2),
-                    PRIMARY KEY(trade_date),
-                    CONSTRAINT fk_common_date
-                        FOREIGN KEY(trade_date) REFERENCES DATE_TB(trade_date)
+                    PRIMARY KEY(trade_date)
                 );
             """,
             "COMM_TB": """
@@ -192,8 +172,6 @@ def initialize_stock_db():
                     interest_beta DECIMAL(18,12),
                     z_score DECIMAL(18,12),
                     PRIMARY KEY(trade_date, ticker),
-                    CONSTRAINT fk_comm_date
-                        FOREIGN KEY(trade_date) REFERENCES DATE_TB(trade_date),
                     CONSTRAINT fk_comm_ticker
                         FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                 );
@@ -208,8 +186,6 @@ def initialize_stock_db():
                     cli_lag DECIMAL(10,2),
                     z_score DECIMAL(18,12),
                     PRIMARY KEY(trade_date, ticker),
-                    CONSTRAINT fk_cons_disc_date
-                        FOREIGN KEY(trade_date) REFERENCES DATE_TB(trade_date),
                     CONSTRAINT fk_cons_disc_ticker
                         FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                 );
@@ -223,8 +199,6 @@ def initialize_stock_db():
                     csi_sentiment DECIMAL(10,2),
                     z_score DECIMAL(18,12),
                     PRIMARY KEY(trade_date, ticker),
-                    CONSTRAINT fk_cons_staples_date
-                        FOREIGN KEY(trade_date) REFERENCES DATE_TB(trade_date),
                     CONSTRAINT fk_cons_staples_ticker
                         FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                 );
@@ -239,8 +213,6 @@ def initialize_stock_db():
                     mfg_lag3 DECIMAL(10,2),
                     z_score DECIMAL(18,12),
                     PRIMARY KEY(trade_date, ticker),
-                    CONSTRAINT fk_cons_date
-                        FOREIGN KEY(trade_date) REFERENCES DATE_TB(trade_date),
                     CONSTRAINT fk_cons_ticker
                         FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                 );
@@ -255,8 +227,6 @@ def initialize_stock_db():
                     oil_beta DECIMAL(18,12),
                     z_score DECIMAL(18,12),
                     PRIMARY KEY(trade_date, ticker),
-                    CONSTRAINT fk_ener_chem_date
-                        FOREIGN KEY(trade_date) REFERENCES DATE_TB(trade_date),
                     CONSTRAINT fk_ener_chem_ticker
                         FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                 );
@@ -270,8 +240,6 @@ def initialize_stock_db():
                     global_fin_beta DECIMAL(18,12),
                     z_score DECIMAL(18,12),
                     PRIMARY KEY(trade_date, ticker),
-                    CONSTRAINT fk_fin_date
-                        FOREIGN KEY(trade_date) REFERENCES DATE_TB(trade_date),
                     CONSTRAINT fk_fin_ticker
                         FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                 );
@@ -287,8 +255,6 @@ def initialize_stock_db():
                     is_high_vol_stock BOOLEAN,
                     z_score DECIMAL(18,12),
                     PRIMARY KEY(trade_date, ticker),
-                    CONSTRAINT fk_heal_date
-                        FOREIGN KEY(trade_date) REFERENCES DATE_TB(trade_date),
                     CONSTRAINT fk_heal_ticker
                         FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                 );
@@ -303,8 +269,6 @@ def initialize_stock_db():
                     energy_momentum DECIMAL(18,12),
                     z_score DECIMAL(18,12),
                     PRIMARY KEY(trade_date, ticker),
-                    CONSTRAINT fk_heavy_date
-                        FOREIGN KEY(trade_date) REFERENCES DATE_TB(trade_date),
                     CONSTRAINT fk_heavy_ticker
                         FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                 );
@@ -320,8 +284,6 @@ def initialize_stock_db():
                     mfg_lag6 DECIMAL(10,2),
                     z_score DECIMAL(18,12),
                     PRIMARY KEY(trade_date, ticker),
-                    CONSTRAINT fk_ind_date
-                        FOREIGN KEY(trade_date) REFERENCES DATE_TB(trade_date),
                     CONSTRAINT fk_ind_ticker
                         FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                 );
@@ -335,8 +297,6 @@ def initialize_stock_db():
                     mfg_cycle_momentum DECIMAL(18,12),
                     z_score DECIMAL(18,12),
                     PRIMARY KEY(trade_date, ticker),
-                    CONSTRAINT fk_it_date
-                        FOREIGN KEY(trade_date) REFERENCES DATE_TB(trade_date),
                     CONSTRAINT fk_it_ticker
                         FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                 );
@@ -353,8 +313,6 @@ def initialize_stock_db():
                     steel_beta DECIMAL(18,12),
                     z_score DECIMAL(18,12),
                     PRIMARY KEY(trade_date, ticker),
-                    CONSTRAINT fk_mate_date
-                        FOREIGN KEY(trade_date) REFERENCES DATE_TB(trade_date),
                     CONSTRAINT fk_mate_ticker
                         FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                 );
@@ -377,8 +335,6 @@ def initialize_stock_db():
                     stock_name VARCHAR(100),
                     score DECIMAL(18,12),
                     PRIMARY KEY(trade_date, ticker),
-                    CONSTRAINT fk_news_date
-                        FOREIGN KEY(trade_date) REFERENCES DATE_TB(trade_date),
                     CONSTRAINT fk_news_ticker
                         FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                 );
