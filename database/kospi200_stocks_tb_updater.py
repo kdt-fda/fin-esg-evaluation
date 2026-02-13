@@ -1,6 +1,7 @@
 import pymysql
 from pykrx import stock
 from datetime import datetime
+import time
 
 def update_kospi200_stocks_table():
     # DB 연결
@@ -13,45 +14,51 @@ def update_kospi200_stocks_table():
         charset='utf8mb4',
     )
 
+    # 영문 코드와 KRX 지수 코드 매핑
+    sector_map = {
+        'COMM': '1150', 'CONS': '1151', 'HI': '1152', 'MAT': '1153',
+        'ENG': '1154', 'IT': '1155', 'FIN': '1156', 'CS': '1157',
+        'CD': '1158', 'IND': '1159', 'HC': '1160'
+    }
+
     try:
         cur = conn.cursor(pymysql.cursors.DictCursor)
-
-        # 현재 날짜 기준 KOSPI200 구성 종목 ticker 가져오기
         today = datetime.now().strftime('%Y%m%d')
-        tickers = stock.get_index_portfolio_deposit_file('1028', today)
 
-        # 모든 종목의 상태를 일단 비활성(False)으로 업데이트
-        # 이번 리스트에 포함된 종목만 아래에서 True로 바뀜
+        # 기존 종목 비활성화 (업데이트 전 초기화)
         cur.execute('UPDATE KOSPI200_STOCKS_TB SET is_active = FALSE;')
 
-        # 최신 종목 데이터 준비 : ticker 이용 종목명 매칭
-        # [(ticker, stock_name)...] 리스트 생성
+        # 섹터별로 돌면서 종목 정보 수집
+        # [(ticker, stock_name, sector_code, is_active) ...]
         data = []
-        for ticker in tickers:
-            stock_name = stock.get_market_ticker_name(ticker)
-            data.append((ticker, stock_name, True))
+
+        print('섹터별 종목 데이터 수집 중...')
+
+        for eng_code, krx_code in sector_map.items():
+            # 해당 섹터 지수 구성 종목 가져오기
+            tickers = stock.get_index_portfolio_deposit_file(krx_code, today)
+
+            for ticker in tickers:
+                stock_name = stock.get_market_ticker_name(ticker)
+                data.append((ticker, stock_name, eng_code, True))
+
+            time.sleep(0.3) # API 과부하 방지
 
         if data:
             # UPSERT : 있으면 업데이트 (이름/상태), 없으면 신규 삽입
             sql = """
-                INSERT INTO KOSPI200_STOCKS_TB (ticker, stock_name, is_active)
-                VALUES (%s, %s, %s)
+                INSERT INTO KOSPI200_STOCKS_TB (ticker, stock_name, sector_code, is_active)
+                VALUES (%s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                 stock_name = VALUES(stock_name),
+                sector_code = VALUES(sector_code),
                 is_active = VALUES(is_active);
                 """
             cur.executemany(sql, data)
             conn.commit()
-            print(f'[{datetime.now()}] KOSPI200 종목 동기화 완료 ({len(data)}건)')
-
-        # 커밋 직후 동일한 커서로 다시 조회해보기
-        cur.execute("SELECT COUNT(*) AS total FROM KOSPI200_STOCKS_TB;")
-        count = cur.fetchone()['total'] # DictCursor 기준
-        print(f"현재 테이블 내 총 데이터 수: {count}개")
-
-        if count > 0:
-            cur.execute("SELECT * FROM KOSPI200_STOCKS_TB LIMIT 5;")
-            print("상위 5개 데이터 샘플:", cur.fetchall())
+            print(f'[{datetime.now()}] KOSPI200 {len(data)}개 종목 정보 및 섹터 매핑 완료')
+        else:
+            print('수집된 종목 데이터가 없습니다.')
 
     except Exception as e:
         print(f'오류 발생: {e}')
