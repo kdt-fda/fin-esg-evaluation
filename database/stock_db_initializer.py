@@ -26,6 +26,13 @@ def initialize_stock_db():
             
         # 테이블 생성
         tables = {
+            "SECTOR_TB": """
+                CREATE TABLE SECTOR_TB (
+                    sector_code VARCHAR(10) NOT NULL,
+                    sector_name VARCHAR(100) NOT NULL,
+                    PRIMARY KEY(sector_code)
+                );
+            """,
             "KOSPI200_STOCKS_TB": """
                 CREATE TABLE KOSPI200_STOCKS_TB (
                     ticker VARCHAR(10) NOT NULL,
@@ -35,13 +42,6 @@ def initialize_stock_db():
                     PRIMARY KEY(ticker),
                     CONSTRAINT fk_stocks_sector
                         FOREIGN KEY(sector_code) REFERENCES SECTOR_TB(sector_code)
-                );
-            """,
-            "SECTOR_TB": """
-                CREATE TABLE SECTOR_TB (
-                    sector_code VARCHAR(10) NOT NULL,
-                    sector_name VARCHAR(100) NOT NULL,
-                    PRIMARY KEY(sector_code)
                 );
             """,
             "STOCK_TB": """
