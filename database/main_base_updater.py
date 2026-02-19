@@ -8,7 +8,7 @@ from kospi200_stocks_tb_updater import update_kospi200_stocks_table
 
 def is_business_day():
     today = datetime.now().strftime("%Y%m%d")
-    # 오늘 날짜의 개장 여부를 확인 (0이면 휴장일일 가능성이 높음)
+    # 오늘 날짜의 개장 여부를 확인
     # pykrx의 get_market_ohlcv는 휴장일일 경우 빈 데이터프레임을 반환합니다.
     df = stock.get_market_ohlcv(today, today, "005930") # 삼성전자 기준 확인
     return not df.empty
