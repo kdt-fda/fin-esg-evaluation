@@ -3,7 +3,7 @@ import logging
 from scripts.stock_crawler import run_stock_crawler
 from scripts.macro_collector import run_macro_collector
 from scripts.fundamental_crawler import run_fundamental_crawler
-# from scripts.news_sentiment_processor import run_news_processor # (나중에 추가)
+from scripts.news_processor import run_news_processor
 
 def is_quarterly_update_time():
     """
@@ -41,8 +41,8 @@ def run_step2_pipeline():
         
         # 4. 뉴스 데이터 (매일 업데이트)
         logging.info("4. 뉴스 데이터 프로세싱 대기 중...")
-        # print("4. 뉴스 감성 분석 데이터 업데이트 중...")
-        # run_news_processor()
+        print("4. 뉴스 감성 분석 데이터 업데이트 중...")
+        run_news_processor()
 
         logging.info("Step 2 모든 수집 및 적재 완료.")
         print("\n✅ Step 2 성공적으로 완료되었습니다.")
