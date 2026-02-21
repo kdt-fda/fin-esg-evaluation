@@ -34,13 +34,13 @@ def run_total_update_process():
         # 결과값을 변수에 저장
         status = run_step1_pipeline()
 
-        # 결과가 False(휴장일)라면 함수 종료
+        # 결과가 False(휴장일)이라면 함수 종료
         if status is False:
             logging.info("📅 휴장일로 인해 전체 프로세스를 종료합니다.")
             logging.info("="*50)
             return
         
-        # 결과가 True(거래일)일 때만 아래 단계 실행
+        # 결과가 True(거래일)이라면 아래 단계 실행
         # [Step 2] 주가/거시경제/재무/뉴스 원천 데이터 수집
         logging.info("Step 2. 원천 데이터(주가/거시경제/재무/뉴스) 수집 및 적재 중...")
         run_step2_pipeline()
