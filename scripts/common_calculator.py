@@ -1,0 +1,136 @@
+import os
+import requests
+import pymysql
+import numpy as np
+import pandas as pd
+import FinanceDataReader as fdr
+from datetime import datetime
+from dotenv import load_dotenv
+
+# ============================================================
+# 1. 설정 및 초기화
+# ============================================================
+load_dotenv()
+DB_CONFIG = {
+    'host': '52.79.234.231', 'port': 3302, 'user': 'root',
+    'password': 'team2', 'database': 'STOCK_DB', 'charset': 'utf8mb4'
+}
+
+FETCH_START_DATE = '2021-01-01'
+FINAL_START_DATE = '2023-01-01'
+LAG_MONTHS = (1, 3, 6)
+
+# ============================================================
+# 2. ECOS Client (선행지수 수집)
+# ============================================================
+class EcosClient:
+    BASE_URL = "https://ecos.bok.or.kr/api"
+
+    def __init__(self, api_key=None):
+        self.api_key = api_key or os.getenv("ECOS_API_KEY")
+        self.session = requests.Session()
+
+    def fetch_cli_data(self, start, end):
+        url = f"{self.BASE_URL}/StatisticSearch/{self.api_key}/json/kr/1/1000/901Y067/M/{start}/{end}/I16E"
+        try:
+            resp = self.session.get(url, timeout=30)
+            rows = resp.json().get("StatisticSearch", {}).get("row", [])
+            if not rows: return pd.DataFrame(columns=["trade_date", "cli"])
+            
+            df = pd.DataFrame(rows)
+            df["trade_date"] = pd.to_datetime(df["TIME"], format="%Y%m").dt.normalize()
+            df["cli"] = pd.to_numeric(df["DATA_VALUE"], errors="coerce")
+            return df[["trade_date", "cli"]]
+        except Exception as e:
+            print(f"📡 ECOS API 오류: {e}")
+            return pd.DataFrame(columns=["trade_date", "cli"])
+
+# ============================================================
+# 3. 지표 계산 및 병합
+# ============================================================
+def calculate_common_indicators(df_kospi, cli_raw):
+    df = df_kospi.copy().sort_values("trade_date")
+    
+    # 1) 주가 기반 레짐 지표
+    df['ma200'] = df['close_kospi200'].rolling(window=200, min_periods=100).mean()
+    df['bull_dummy'] = (df['close_kospi200'] > df['ma200']).astype(int)
+    df['mkt_ret'] = df['close_kospi200'].pct_change()
+    df['mkt_vol_20'] = df['mkt_ret'].rolling(window=20, min_periods=20).std()
+    df['vol_threshold'] = df['mkt_vol_20'].rolling(window=252, min_periods=100).quantile(0.8)
+    df['high_vol_dummy'] = (df['mkt_vol_20'] > df['vol_threshold']).astype(int)
+    df['mkt_regime'] = df['bull_dummy'] * 2 + df['high_vol_dummy']
+
+    # 2) CLI 및 Lag 지표
+    cli_df = cli_raw.sort_values("trade_date").reset_index(drop=True)
+    for k in LAG_MONTHS:
+        cli_df[f"cli_lag{k}"] = cli_df["cli"].shift(k)
+
+    # 3) 병합
+    df['trade_date'] = pd.to_datetime(df['trade_date'])
+    cli_df['trade_date'] = pd.to_datetime(cli_df['trade_date'])
+    
+    merged = pd.merge_asof(df, cli_df, on="trade_date", direction="backward")
+    cli_cols = ['cli', 'cli_lag1', 'cli_lag3', 'cli_lag6']
+    merged[cli_cols] = merged[cli_cols].ffill()
+    
+    return merged[merged["trade_date"] >= FINAL_START_DATE]
+
+# ============================================================
+# 4. DB 적재 (INSERT 전용)
+# ============================================================
+def send_to_common_db(df):
+    if df.empty: return
+    
+    conn = pymysql.connect(**DB_CONFIG)
+    try:
+        cur = conn.cursor()
+        df = df.replace({np.nan: None})
+        
+        sql = """
+            INSERT INTO COMMON_TB (
+                trade_date, close_kospi200, ma200, bull_dummy, mkt_ret, 
+                mkt_vol_20, vol_threshold, high_vol_dummy, mkt_regime, 
+                cli, cli_lag1, cli_lag3, cli_lag6
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                close_kospi200=VALUES(close_kospi200),
+                ma200=VALUES(ma200),
+                bull_dummy=VALUES(bull_dummy),
+                mkt_ret=VALUES(mkt_ret),
+                mkt_vol_20=VALUES(mkt_vol_20),
+                vol_threshold=VALUES(vol_threshold),
+                high_vol_dummy=VALUES(high_vol_dummy),
+                mkt_regime=VALUES(mkt_regime),
+                cli=VALUES(cli),
+                cli_lag1=VALUES(cli_lag1),
+                cli_lag3=VALUES(cli_lag3),
+                cli_lag6=VALUES(cli_lag6);
+        """
+        
+        data = [tuple(row) for row in df.values]
+        cur.executemany(sql, data)
+        conn.commit()
+        print(f"✅ COMMON_TB 업데이트 완료: {len(df)}건")
+    except Exception as e:
+        print(f"❌ DB 적재 오류: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
+
+def run_common_indicator_calculator():
+    print("🚀 공통 지표 계산 및 업데이트 중...")
+    
+    end_date = datetime.now().strftime("%Y-%m-%d")
+    df_kospi = fdr.DataReader('KS200', start=FETCH_START_DATE, end=end_date).reset_index()
+    df_kospi = df_kospi.rename(columns={'Date': 'trade_date', 'Close': 'close_kospi200'})[['trade_date', 'close_kospi200']]
+    
+    client = EcosClient()
+    ecos_start = pd.to_datetime(FETCH_START_DATE).strftime("%Y%m")
+    ecos_end = pd.to_datetime(end_date).strftime("%Y%m")
+    cli_raw = client.fetch_cli_data(ecos_start, ecos_end)
+    
+    final_df = calculate_common_indicators(df_kospi, cli_raw)
+    send_to_common_db(final_df)
+
+if __name__ == "__main__":
+    run_common_indicator_calculator()
