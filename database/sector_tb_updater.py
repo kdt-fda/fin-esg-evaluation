@@ -1,6 +1,9 @@
 import pymysql
 import os
 from pykrx import stock
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def _connect():
     host = os.environ.get('DB_HOST')

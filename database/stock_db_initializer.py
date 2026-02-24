@@ -1,5 +1,8 @@
 import pymysql
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def initialize_stock_db():
     # DB 생성 단계 (기존 STOCK_DB가 없을 수 있으므로 database 인자 없이 연결)

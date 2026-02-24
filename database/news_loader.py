@@ -1,6 +1,9 @@
 import pandas as pd
 import pymysql
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def _connect():
     host = os.environ.get('DB_HOST')
@@ -82,5 +85,7 @@ def upload_news_score_csv(file_path):
         conn.close()
 
 if __name__ == "__main__":
-    # 파일명이 다를 경우 수정하세요
-    upload_news_score_csv('news_score.csv')
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(current_dir, '..', 'data', 'news_score.csv')
+    
+    upload_news_score_csv(file_path)
