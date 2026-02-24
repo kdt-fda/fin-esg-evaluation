@@ -1,21 +1,18 @@
 import pymysql
+import os
+from dotenv import load_dotenv
 
-def get_connection():
-    # DB 연결
-    return pymysql.connect(
-        host='52.79.234.231',
-        port=3302,
-        user='root',
-        password='team2',
-        database='STOCK_DB',
-        charset='utf8mb4',
-    )
+load_dotenv()
 
 def initialize_stock_db():
     # DB 생성 단계 (기존 STOCK_DB가 없을 수 있으므로 database 인자 없이 연결)
+    host = os.environ.get('DB_HOST')
+    port = int(os.environ.get('DB_PORT'))
+    user = os.getenv('DB_USER')
+    password = os.getenv('DB_PASSWORD')
+
     init_conn = pymysql.connect(
-        host='52.79.234.231', port=3302, user='root', password='team2', charset='utf8mb4'
-    )
+        host=host, port=port, user=user, password=password)
     
     try:
         with init_conn.cursor() as cur:
