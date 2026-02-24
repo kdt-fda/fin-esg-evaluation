@@ -173,8 +173,15 @@ class StockDataJoiner:
                 direction='backward'
             )
             
-            # 병합용 가상 컬럼(fs_date) 및 원본 end_date 삭제
-            drop_cols = ['fs_date', 'end_date']
+            # 불필요한 컬럼 및 중복 컬럼 정리
+            # 1) ticker_y(재무쪽 티커) 제거 및 ticker_x를 ticker로 변경
+            if 'ticker_y' in df_final.columns:
+                df_final = df_final.drop(columns=['ticker_y'])
+            if 'ticker_x' in df_final.columns:
+                df_final = df_final.rename(columns={'ticker_x': 'ticker'})
+
+            # 2) year, reprt_code, price 및 내부용 날짜 컬럼 제거
+            drop_cols = ['fs_date', 'end_date', 'year', 'reprt_code', 'price']
             df_final = df_final.drop(columns=[c for c in drop_cols if c in df_final.columns])
                 
         else:
