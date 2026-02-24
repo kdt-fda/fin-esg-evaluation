@@ -14,10 +14,22 @@ load_dotenv()
 # ============================================================
 # 1. 공통 설정 및 DB 유틸리티
 # ============================================================
-DB_CONFIG = {
-    'host': '52.79.234.231', 'port': 3302, 'user': 'root',
-    'password': 'team2', 'database': 'STOCK_DB', 'charset': 'utf8mb4'
-}
+def _connect():
+    host = os.environ.get('DB_HOST')
+    port = int(os.environ.get('DB_PORT'))
+    user = os.getenv('DB_USER')
+    password = os.getenv('DB_PASSWORD')
+    db_name = os.getenv('DB_NAME')
+
+    conn = pymysql.connect(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database=db_name
+    )
+
+    return conn
 
 USER_START_DATE = '2023-01-01'
 FETCH_START_DATE = (pd.to_datetime(USER_START_DATE) - Day(300)).strftime('%Y-%m-%d')
@@ -25,11 +37,8 @@ END_DATE = datetime.now().strftime('%Y-%m-%d')
 
 ECOS_START_YM = (pd.to_datetime(USER_START_DATE) - DateOffset(months=30)).strftime('%Y%m')
 
-def get_db_connection():
-    return pymysql.connect(**DB_CONFIG)
-
 def get_tickers_by_sector(sector_code):
-    conn = get_db_connection()
+    conn = _connect()
     try:
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
             sql = "SELECT ticker, stock_name FROM KOSPI200_STOCKS_TB WHERE sector_code = %s AND is_active = TRUE"
@@ -192,7 +201,7 @@ def process_communication_service():
     # 4. DB 적재
     if all_results:
         final_df = pd.concat(all_results).replace({np.nan: None})
-        conn = get_db_connection()
+        conn = _connect()
         try:
             cur = conn.cursor()
             sql = """
@@ -302,7 +311,7 @@ def process_consumer_discretionary():
     # 4. DB 적재
     if all_results:
         final_df = pd.concat(all_results).replace({np.nan: None})
-        conn = get_db_connection()
+        conn = _connect()
         try:
             cur = conn.cursor()
             sql = """
@@ -358,7 +367,7 @@ def process_consumer_staples():
     usd_krw = safe_fetch_yf('USDKRW=X', FETCH_START_DATE, END_DATE, 'USD_KRW')
     tiger_cs = safe_fetch_fdr('227560', FETCH_START_DATE, END_DATE, 'ETF_Close')
 
-    conn = get_db_connection()
+    conn = _connect()
     try:
         # end_date를 Date로 확실히 Alias
         funda_sql = f"SELECT ticker, end_date as Date, revenue_growth, ebitda, revenue FROM FUNDAMENTAL_TB WHERE ticker IN ({str(ticker_list)[1:-1]})"
@@ -404,7 +413,7 @@ def process_consumer_staples():
     # 5. DB 적재
     if all_results:
         final_df = pd.concat(all_results).replace({np.nan: None})
-        conn = get_db_connection()
+        conn = _connect()
         try:
             cur = conn.cursor()
             sql = """
@@ -522,7 +531,7 @@ def process_construction():
     # 4. DB 적재
     if all_results:
         final_df = pd.concat(all_results).replace({np.nan: None})
-        conn = get_db_connection()
+        conn = _connect()
         try:
             cur = conn.cursor()
             sql = """
@@ -638,7 +647,7 @@ def process_energy_chemical():
     # 4. DB 적재
     if all_results:
         final_df = pd.concat(all_results).replace({np.nan: None})
-        conn = get_db_connection()
+        conn = _connect()
         try:
             cur = conn.cursor()
             sql = """
@@ -736,7 +745,7 @@ def process_finance():
     # 4. DB 적재
     if all_results:
         final_df = pd.concat(all_results).replace({np.nan: None})
-        conn = get_db_connection()
+        conn = _connect()
         try:
             cur = conn.cursor()
             sql = """
@@ -786,7 +795,7 @@ def process_healthcare():
     
     # 3. DB에서 재무 및 R&D 데이터 수집 (FUNDAMENTAL_TB, RND_TB)
     print("📡 DB에서 재무(PBR) 및 R&D 투자 데이터 수집 중...")
-    conn = get_db_connection()
+    conn = _connect()
     try:
         # PBR 및 매출 데이터
         funda_sql = f"""
@@ -858,7 +867,7 @@ def process_healthcare():
     # 5. DB 적재
     if all_results:
         final_df = pd.concat(all_results).replace({np.nan: None})
-        conn = get_db_connection()
+        conn = _connect()
         try:
             cur = conn.cursor()
             sql = """
@@ -972,7 +981,7 @@ def process_heavy_industry():
     # 4. DB 적재
     if all_results:
         final_df = pd.concat(all_results).replace({np.nan: None})
-        conn = get_db_connection()
+        conn = _connect()
         try:
             cur = conn.cursor()
             sql = """
@@ -1096,7 +1105,7 @@ def process_industrials():
     # 4. DB 적재
     if all_results:
         final_df = pd.concat(all_results).replace({np.nan: None})
-        conn = get_db_connection()
+        conn = _connect()
         try:
             cur = conn.cursor()
             sql = """
@@ -1194,7 +1203,7 @@ def process_it():
     # 4. DB 적재
     if all_results:
         final_df = pd.concat(all_results).replace({np.nan: None})
-        conn = get_db_connection()
+        conn = _connect()
         try:
             cur = conn.cursor()
             sql = """
@@ -1325,7 +1334,7 @@ def process_materials():
     # 4. DB 적재
     if all_results:
         final_df = pd.concat(all_results).replace({np.nan: None})
-        conn = get_db_connection()
+        conn = _connect()
         try:
             cur = conn.cursor()
             sql = """

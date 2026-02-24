@@ -17,10 +17,23 @@ from dotenv import load_dotenv
 # 1. 설정 및 로드
 # ============================================================
 load_dotenv()
-DB_CONFIG = {
-    'host': '52.79.234.231', 'port': 3302, 'user': 'root',
-    'password': 'team2', 'database': 'STOCK_DB', 'charset': 'utf8mb4'
-}
+
+def _connect():
+    host = os.environ.get('DB_HOST')
+    port = int(os.environ.get('DB_PORT'))
+    user = os.getenv('DB_USER')
+    password = os.getenv('DB_PASSWORD')
+    db_name = os.getenv('DB_NAME')
+
+    conn = pymysql.connect(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database=db_name
+    )
+
+    return conn
 
 MODEL_NAME = "snunlp/KR-FinBert-SC"
 BATCH_SIZE = 32
@@ -42,9 +55,6 @@ label_values = torch.linspace(-1.0, 1.0, steps=int(model.config.num_labels), dev
 # ============================================================
 # 2. 유틸리티 및 클렌징 함수
 # ============================================================
-def get_db_connection():
-    return pymysql.connect(**DB_CONFIG)
-
 def clean_text(text):
     """기자명, 이메일, 광고성 문구 제거"""
     text = re.sub(r'[a-zA-Z0-9+-_.] + @[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', '', text) # 이메일 제거
@@ -106,7 +116,7 @@ def run_news_processor():
     print(f"🚀 뉴스 감성 분석 파이프라인 시작 ({START_DATE} ~ {END_DATE})")
     
     # 1. DB에서 종목명 조회
-    conn = get_db_connection()
+    conn = _connect()
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT ticker, stock_name FROM KOSPI200_STOCKS_TB WHERE is_active=TRUE")
@@ -147,7 +157,7 @@ def run_news_processor():
 
     # 5. DB 적재
     print("💾 분석 결과 DB 적재 중...")
-    conn = get_db_connection()
+    conn = _connect()
     try:
         with conn.cursor() as cur:
             sql = """

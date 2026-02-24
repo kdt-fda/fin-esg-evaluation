@@ -16,10 +16,22 @@ load_dotenv()
 ECOS_API_KEY = os.getenv("ECOS_API_KEY")
 FRED_API_KEY = os.getenv("FRED_API_KEY")
 
-DB_CONFIG = {
-    'host': '52.79.234.231', 'port': 3302, 'user': 'root',
-    'password': 'team2', 'database': 'STOCK_DB', 'charset': 'utf8mb4'
-}
+def _connect():
+    host = os.environ.get('DB_HOST')
+    port = int(os.environ.get('DB_PORT'))
+    user = os.getenv('DB_USER')
+    password = os.getenv('DB_PASSWORD')
+    db_name = os.getenv('DB_NAME')
+
+    conn = pymysql.connect(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database=db_name
+    )
+
+    return conn
 
 FINAL_CUT_START = "2023-01-01"
 
@@ -141,7 +153,8 @@ def run_macro_collector(is_initial=False):
 # 4. DB 적재 (MACROECONOMICS_TB)
 # ==========================================
 def send_to_macro_db(df):
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = _connect()
+    
     try:
         cur = conn.cursor()
         df = df.replace({np.nan: None})

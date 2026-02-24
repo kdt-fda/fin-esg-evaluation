@@ -11,10 +11,23 @@ from dotenv import load_dotenv
 # 1. 설정 및 초기화
 # ============================================================
 load_dotenv()
-DB_CONFIG = {
-    'host': '52.79.234.231', 'port': 3302, 'user': 'root',
-    'password': 'team2', 'database': 'STOCK_DB', 'charset': 'utf8mb4'
-}
+
+def _connect():
+    host = os.environ.get('DB_HOST')
+    port = int(os.environ.get('DB_PORT'))
+    user = os.getenv('DB_USER')
+    password = os.getenv('DB_PASSWORD')
+    db_name = os.getenv('DB_NAME')
+
+    conn = pymysql.connect(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database=db_name
+    )
+
+    return conn
 
 FETCH_START_DATE = '2021-01-01'
 FINAL_START_DATE = '2023-01-01'
@@ -80,8 +93,9 @@ def calculate_common_indicators(df_kospi, cli_raw):
 # ============================================================
 def send_to_common_db(df):
     if df.empty: return
+
+    conn = _connect()
     
-    conn = pymysql.connect(**DB_CONFIG)
     try:
         cur = conn.cursor()
         df = df.replace({np.nan: None})

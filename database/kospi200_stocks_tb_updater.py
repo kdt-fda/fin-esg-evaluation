@@ -1,18 +1,28 @@
 import pymysql
+import os
 from pykrx import stock
 from datetime import datetime
 import time
 
-def update_kospi200_stocks_table():
-    # DB 연결
+def _connect():
+    host = os.environ.get('DB_HOST')
+    port = int(os.environ.get('DB_PORT'))
+    user = os.getenv('DB_USER')
+    password = os.getenv('DB_PASSWORD')
+    db_name = os.getenv('DB_NAME')
+
     conn = pymysql.connect(
-        host='52.79.234.231',
-        port=3302,
-        user='root',
-        password='team2',
-        database='STOCK_DB',
-        charset='utf8mb4',
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database=db_name
     )
+
+    return conn
+
+def update_kospi200_stocks_table():
+    conn = _connect()
 
     # 영문 코드와 KRX 지수 코드 매핑
     sector_map = {

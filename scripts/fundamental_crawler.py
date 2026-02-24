@@ -16,10 +16,22 @@ load_dotenv()
 api_key = os.getenv("DART_API_KEY")
 dart = OpenDartReader(api_key)
 
-DB_CONFIG = {
-    'host': '52.79.234.231', 'port': 3302, 'user': 'root',
-    'password': 'team2', 'database': 'STOCK_DB', 'charset': 'utf8mb4'
-}
+def _connect():
+    host = os.environ.get('DB_HOST')
+    port = int(os.environ.get('DB_PORT'))
+    user = os.getenv('DB_USER')
+    password = os.getenv('DB_PASSWORD')
+    db_name = os.getenv('DB_NAME')
+
+    conn = pymysql.connect(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database=db_name
+    )
+
+    return conn
 
 # 0) MAPPING
 BS_ACCOUNT_MAP = {
@@ -414,10 +426,10 @@ def build_final_df(
 # ==========================================
 def get_targets_from_db():
     """KOSPI200_STOCKS_TB에서 활성 종목 리스트를 가져옵니다."""
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = _connect()
+
     try:
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
-            # 병규님이 이미 구축하신 종목 마스터 테이블을 활용합니다
             cur.execute("SELECT ticker, stock_name FROM KOSPI200_STOCKS_TB WHERE is_active = TRUE;")
             return cur.fetchall()
     finally:
@@ -433,7 +445,8 @@ def send_to_db(df):
     # 이제 'ticker' 컬럼이 존재하므로 정렬이 가능합니다.
     df = df.sort_values(by=["ticker", "year", "reprt_code"]).reset_index(drop=True)
     
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = _connect()
+    
     try:
         cur = conn.cursor()
         df = df.replace({np.nan: None})
