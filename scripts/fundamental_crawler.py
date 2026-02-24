@@ -472,7 +472,7 @@ def send_to_db(df):
     finally:
         conn.close()
 
-def run_fundamental_crawler(start_year=2023, end_year=2025, end_q="Q3", chunk_size=15):
+def run_fundamental_crawler(start_year=2022, end_year=2025, end_q="Q3", chunk_size=15):
     """CSV 없이 DB 명단 기반으로 배치를 실행합니다."""
     targets = get_targets_from_db()
     if not targets: return
@@ -498,4 +498,4 @@ def run_fundamental_crawler(start_year=2023, end_year=2025, end_q="Q3", chunk_si
             print(f"✅ Batch {i//chunk_size + 1} 적재 완료")
 
 if __name__ == "__main__":
-    run_fundamental_crawler(start_year=2023, end_year=2025, end_q="Q3")
+    run_fundamental_crawler(start_year=2022, end_year=2025, end_q="Q3")
