@@ -25,10 +25,14 @@ def run_step2_pipeline():
         print("1. 주가 데이터 업데이트 중...")
         run_stock_crawler()
         
-        # 2. 거시경제 데이터 (매일/매월 업데이트)
-        logging.info("2. 거시경제 지표 수집 중...")
-        print("2. 거시경제 지표 업데이트 중...")
-        run_macro_collector(is_initial=False)
+        # 2. 거시경제 데이터 (발표 시간에 따라 에러 발생 잦으므로 try-except)
+        try:
+            logging.info("2. 거시경제 지표 수집 중...")
+            print("2. 거시경제 지표 업데이트 중...")
+            run_macro_collector(is_initial=False)
+        except Exception as macro_e:
+            logging.warning(f"⚠️ 거시경제 데이터 수집 중 일부 실패 (진행 가능): {macro_e}")
+            print(f"⚠️ 거시경제 지표 일부 수집 실패. 다음 단계로 진행합니다.")
         
         # 3. 펀더멘털 데이터 (분기별 체크)
         if is_quarterly_update_time():
