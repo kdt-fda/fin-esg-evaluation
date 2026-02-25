@@ -28,7 +28,8 @@ def _connect():
         user=user,
         password=password,
         database=db_name,
-        charset='utf8mb4'
+        charset='utf8mb4',
+        cursorclass=pymysql.cursors.DictCursor
     )
     return conn
 
@@ -51,10 +52,15 @@ def get_last_update_date(ticker, cur):
     sql = "SELECT MAX(trade_date) as last_date FROM STOCK_TB WHERE ticker = %s"
     cur.execute(sql, (ticker,))
     result = cur.fetchone()
-    if result and result['last_date']:
-        # 마지막 날짜 다음날부터 수집
+
+    # 결과가 딕셔너리 형태일 때 (이름으로 접근)
+    if isinstance(result, dict) and result.get('last_date'):
         return (result['last_date'] + timedelta(days=1)).strftime("%Y%m%d")
-    return "20220601" # 데이터가 전혀 없을 경우 초기값
+    # 결과가 튜플 형태일 때 (인덱스로 접근)
+    elif isinstance(result, (tuple, list)) and result[0]:
+        return (result[0] + timedelta(days=1)).strftime("%Y%m%d")
+    
+    return "20220601"
 
 # ==========================================
 # 2. 데이터 수집 (시작일 2022-06-01 고정)
@@ -138,7 +144,11 @@ def calculate_indicators(df):
 # 4. 개별 종목 처리 함수 (병렬용)
 # ==========================================
 def process_single_stock(target):
-    ticker, name = target['ticker'], target['stock_name']
+    if isinstance(target, dict):
+        ticker, name = target['ticker'], target['stock_name']
+    else:
+        ticker, name = target[0], target[1]
+
     required_cols = ['MA5', 'MA20', 'MA60', 'MA120', 'BB_Upper', 'BB_Lower', 'BB_Breakout', 'RSI', 'MACD', 'MACD_Sig', 'GC_5_20', 'DC_5_20', 'MSCI_Event']
     
     conn = _connect()
