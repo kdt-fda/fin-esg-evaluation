@@ -71,14 +71,14 @@ def run_macro_collector(is_initial=False):
         s_d, s_m, s_q, s_fred = "20220101", "202201", "2021Q1", "2022-01-01"
         trade_s_m = "202101"
     else:
-        lookback = (datetime.now() - timedelta(days=20))
+        lookback = (datetime.now() - timedelta(days=60))
         s_d, s_m, s_fred = lookback.strftime("%Y%m%d"), lookback.strftime("%Y%m"), lookback.strftime("%Y-%m-%d")
-        s_q = (datetime.now() - timedelta(days=150)).strftime("%YQ1")
-        trade_s_m = (datetime.now() - timedelta(days=400)).strftime("%Y%m")
+        s_q = (datetime.now() - timedelta(days=200)).strftime("%YQ1")
+        trade_s_m = (datetime.now() - timedelta(days=500)).strftime("%Y%m")
 
     e_d = datetime.now().strftime("%Y%m%d")
     e_m = datetime.now().strftime("%Y%m")
-    e_q = "2025Q4" 
+    e_q = "2025Q4"
 
     dfs = {}
 
@@ -119,30 +119,37 @@ def run_macro_collector(is_initial=False):
         dfs[col] = fetch_fred_series(sid, col, s_fred)
 
     # 4. 통합 및 전처리 (핵심 수정 부분)
-    # 모든 데이터프레임을 하나의 리스트로 모아 'date' 기준으로 outer merge
-    merged = None
-    for k, d in dfs.items():
-        if d is None or d.empty: 
-            print(f"⚠️ 데이터 누락: {k}")
-            continue
-        if merged is None:
-            merged = d
-        else:
-            merged = pd.merge(merged, d, on="date", how="outer")
+    # 🎯 [1단계] 수출입 YoY를 "월간 원본"에서 미리 계산 (ffill 하기 전에!)
+    if "export" in dfs and not dfs["export"].empty:
+        df_ex = dfs["export"].sort_values("date")
+        # 월간 데이터이므로 pct_change(12)가 정확히 작년 이달과 비교함
+        df_ex["export_yoy"] = df_ex["export_total"].pct_change(12) * 100
+        dfs["export"] = df_ex[["date", "export_yoy"]] # yoy만 남김
 
-    # 날짜 정렬 후 '일별' 타임라인 생성하여 빈 날짜 메우기
+    if "import" in dfs and not dfs["import"].empty:
+        df_im = dfs["import"].sort_values("date")
+        df_im["import_yoy"] = df_im["import_total"].pct_change(12) * 100
+        dfs["import"] = df_im[["date", "import_yoy"]] # yoy만 남김
+
+    # 🎯 [2단계] 모든 데이터 병합
+    valid_dfs = [v for k, v in dfs.items() if v is not None and not v.empty]
+    merged = valid_dfs[0]
+    for d in valid_dfs[1:]:
+        merged = pd.merge(merged, d, on="date", how="outer")
+
     merged = merged.sort_values("date")
-    
-    # [수정] ffill/bfill을 먼저 해서 빈 칸을 앞뒤 데이터로 꽉 채움
+
+    # 🎯 [3단계] 병합된 "계산 완료된 YoY"를 오늘 날짜까지 ffill
     all_cols = [c for c in merged.columns if c != 'date']
+    # 여기서 ffill을 하면 이미 숫자가 채워진 YoY 값이 2월까지 복사됩니다!
     merged[all_cols] = merged[all_cols].ffill().bfill()
 
-    # 파생 변수 계산 (ffill 이후에 해야 정확함)
+    # 🎯 [4단계] 나머지 파생 변수 계산
     merged["rate_diff_policy"] = merged["us_policy_rate"] - merged["base_rate"]
     merged["rate_diff_3y"] = merged["us_ust_3y"] - merged["ktb3y"]
     merged["rate_diff_10y"] = merged["us_ust_10y"] - merged["ktb10y"]
 
-    # 5. 분석 시작 시점 이후 데이터만 필터링 (2023-01-01)
+    # 5. 분석 시작 시점 이후 필터링
     merged = merged[merged["date"] >= FINAL_CUT_START].reset_index(drop=True)
 
     # DB 적재
