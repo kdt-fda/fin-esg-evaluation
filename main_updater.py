@@ -57,10 +57,10 @@ def run_total_update_process():
         # 여기에 이메일 알림 함수를 호출하면 좋습니다.
 
 if __name__ == "__main__":
-    # 매일 16:30분에 실행되도록 예약
-    schedule.every().day.at("16:30").do(run_total_update_process)
+    # 매일 22:00분에 실행되도록 예약
+    schedule.every().day.at("22:00").do(run_total_update_process)
     
-    logging.info("⏰ 스케줄러 활성화: 매일 16:30에 업데이트를 시작합니다.")
+    logging.info("⏰ 스케줄러 활성화: 매일 22:00에 업데이트를 시작합니다.")
 
     # 무한 루프를 돌며 정해진 시간이 되었는지 체크
     while True:
