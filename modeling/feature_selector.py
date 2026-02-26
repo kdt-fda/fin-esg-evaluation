@@ -22,10 +22,9 @@ class FeatureSelector:
         self.long_term_list = [
             'ma60', 'ma120', 'ma200', 'golden_cross_20_60', 'death_cross_20_60',
             'revenue', 'revenue_growth', 'operating_income', 'operating_margin', 
-            'net_income', 'depreciation', 'ebitda', 'equity', 'assets', 
-            'liabilities', 'cash', 'roe', 'roa', 'debt_ratio', 'cfo', 'capex', 
-            'fcf', 'shares', 'market_cap', 'per', 'pbr', 'ev', 'ev_ebitda',
-            'us_cpi', 'us_core_cpi', 'us_core_pce', 'us_unrate', 'us_init_claims', 
+            'net_income', 'depreciation', 'rnd_expense', 'roe', 'roa', 'debt_ratio', 
+            'shares', 'market_cap', 'per', 'pbr', 'ebitda', 'ev_ebitda',
+            'us_cpi', 'us_core_cpi', 'us_core_pce', 'us_unrate', 'us_init_claims',
             'us_policy_rate', 'base_rate', 'us_ust_3y', 'us_ust_10y', 'ktb3y', 'ktb10y', 
             'kr_cpi', 'unemployment_rate', 'ccsi', 'export_total', 'export_yoy', 
             'import_total', 'import_yoy', 'gdp_level', 'gdp_qoq', 'jpy3', 'jpy10', 
