@@ -9,6 +9,7 @@ import FinanceDataReader as fdr
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ==========================================
 # 1. 설정 및 초기화
@@ -36,9 +37,9 @@ REQUESTS = {
 
 # DB 컬럼 매핑
 HB_TO_COL = {
-    "PER(주가수익비율)": "per",
+    "PER(주가수익비율)": "per_raw",
     "PBR(주가순자산비율)": "pbr",
-    "EV/EBITDA(기업가치/영업이익 비율)": "ev_ebitda",
+    "EV/EBITDA(기업가치/영업이익 비율)": "ev_ebitda_raw",
     "ROA": "roa",
     "ROE": "roe",
     "매출액증가율": "revenue_growth",
@@ -51,6 +52,10 @@ HB_TO_COL = {
     "당기순이익(손실)": "net_income",
     "경상개발비": "rnd_expense",
     "감가상각비": "depreciation",
+    "EPS(주당순이익)": "eps",
+    "단기금융부채": "short_debt",
+    "장기금융부채": "long_debt",
+    "현금및현금성자산(현금성자산)": "cash",
 }
 
 # 재편된 DB 구조에 맞춘 최종 컬럼 리스트
@@ -129,7 +134,7 @@ A_MAP = make_a_to_period(TO_YEAR)
 # 3. 데이터 가공 로직
 # ==========================================
 
-def process_raw_data(all_long_df, ticker, name):
+def process_raw_data(all_long_df, ticker):
     df = all_long_df.copy()
     # 기간 매핑
     periods = df["A_index"].apply(lambda i: A_MAP.get(int(i), (None, None))).tolist()
@@ -145,8 +150,14 @@ def process_raw_data(all_long_df, ticker, name):
     # Pivot
     wide = df.pivot_table(index=["year", "quarter"], columns="col", values="value", aggfunc="first").reset_index()
     
+    # 🎯 타입 에러 방지: 모든 수치 컬럼을 숫자형으로 강제 변환
+    num_cols = wide.columns.drop(['year', 'quarter'])
+    for c in num_cols:
+        wide[c] = pd.to_numeric(wide[c], errors="coerce")
+    
     # 단위 보정
-    money_cols = ["revenue", "operating_income", "net_income", "rnd_expense", "depreciation"]
+    money_cols = ["revenue", "operating_income", "net_income", "rnd_expense",
+                  "depreciation","short_debt", "long_debt", "cash"]
     pct_cols = ["roa", "roe", "revenue_growth", "operating_margin", "debt_ratio", "ebitda_margin"]
     
     for c in money_cols:
@@ -180,13 +191,36 @@ def add_market_data(df, ticker):
         df["price"] = df.apply(get_close, axis=1)
         df["shares"] = shares
         df["market_cap"] = df["price"] * df["shares"]
+
+        # 🎯 PER 계산 (EPS 우선, 없으면 제공된 per_raw 사용)
+        if "eps" in df.columns:
+            eps_clean = pd.to_numeric(df["eps"], errors="coerce").replace(0, np.nan)
+            df["per"] = df["price"] / eps_clean
+        else:
+            df["per"] = df.get("per_raw", np.nan)
+
+        # 🎯 EV/EBITDA 정밀 계산 (부채/현금 고려)
+        if "ebitda" in df.columns:
+            # 💡 [핵심] 컬럼 존재 여부 체크 후 0으로 안전하게 합산
+            s_debt = df["short_debt"] if "short_debt" in df.columns else 0
+            l_debt = df["long_debt"] if "long_debt" in df.columns else 0
+            cash_val = df["cash"] if "cash" in df.columns else 0
+            
+            ev = df["market_cap"] + s_debt + l_debt - cash_val
+            ebitda_clean = pd.to_numeric(df["ebitda"], errors="coerce").replace(0, np.nan)
+            df["ev_ebitda"] = ev / ebitda_clean
+        else:
+            # ebitda 데이터가 없으면 Seibro에서 준 원본 값을 백업으로 사용
+            df["ev_ebitda"] = df.get("ev_ebitda_raw", np.nan)
+
     except Exception as e:
         print(f"  [WARN] Market data fail: {e}")
-        for c in ["price", "shares", "market_cap"]: df[c] = np.nan
+        for c in ["price", "shares", "market_cap", "per", "ev_ebitda"]:
+            if c not in df.columns: df[c] = np.nan
     return df
 
 # ==========================================
-# 4. DB 연동 및 실행
+# 4. DB 연동 및 멀티스레딩 실행
 # ==========================================
 
 def get_targets_from_db():
@@ -221,43 +255,70 @@ def send_to_db(df):
         print(f"❌ DB 적재 에러: {e}"); conn.rollback()
     finally: conn.close()
 
-def run_fundamental_crawler(chunk_size=10):
-    targets = get_targets_from_db()
-    session = requests.Session()
-    session.get(BASE_URL)
+def fetch_single_ticker(ticker_info):
+    ticker = ticker_info['ticker']
+    name = ticker_info['stock_name']
 
-    for i in range(0, len(targets), chunk_size):
-        batch = targets[i : i + chunk_size]
-        batch_results = []
+    s = requests.Session()
+    try:
+        s.get(BASE_URL, headers=HEADERS, timeout=10)
+        custno = get_issuco_custno(s, ticker)
+        if not custno: return None
+
+        all_long = []
+        for spec in REQUESTS.values():
+            time.sleep(0.3)
+            xml = s.post(API_URL, data=build_payload(spec, custno).encode("utf-8"), headers=HEADERS, timeout=15).text
+            all_long.append(parse_xml_to_long(xml))
         
-        for t in batch:
-            ticker, name = t['ticker'], t['stock_name']
-            print(f"▶ [{i//chunk_size + 1}] {name}({ticker}) 분석 중...")
-            try:
-                custno = get_issuco_custno(session, ticker)
-                if not custno: continue
+        combined_long = pd.concat(all_long, ignore_index=True)
+        panel = process_raw_data(combined_long, ticker)
+        panel = add_market_data(panel, ticker)
+        
+        for c in FINAL_DB_COLS:
+            if c not in panel.columns: panel[c] = np.nan
+        
+        print(f"  [OK] {name}({ticker}) 수집 완료")
+        return panel[FINAL_DB_COLS]
+    except Exception as e:
+        print(f"  [ERROR] {ticker}: {e}")
+        return None
+    finally:
+        s.close()
 
-                all_long = []
-                for spec in REQUESTS.values():
-                    xml = session.post(API_URL, data=build_payload(spec, custno).encode("utf-8"), headers=HEADERS).text
-                    all_long.append(parse_xml_to_long(xml))
-                
-                combined_long = pd.concat(all_long, ignore_index=True)
-                panel = process_raw_data(combined_long, ticker, name)
-                panel = add_market_data(panel, ticker)
-                
-                # 최종 컬럼 보정
-                for c in FINAL_DB_COLS:
-                    if c not in panel.columns: panel[c] = np.nan
-                
-                batch_results.append(panel[FINAL_DB_COLS])
-                time.sleep(0.5) # 과도한 요청 방지
-            except Exception as e:
-                print(f"  [ERROR] {ticker}: {e}")
+def run_fundamental_crawler(max_workers=3):
+    """멀티스레딩 기반 크롤러 메인"""
+    targets = get_targets_from_db()
+    
+    def get_session():
+        s = requests.Session()
+        s.get(BASE_URL)
+        return s
 
-        if batch_results:
-            send_to_db(pd.concat(batch_results, ignore_index=True))
-            print(f"✅ Batch {i//chunk_size + 1} 적재 완료")
+    batch_results = []
+    print(f"🚀 멀티스레딩 크롤링 시작 (Worker: {max_workers})...")
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(fetch_single_ticker, t): t for t in targets}
+        
+        count = 0
+        for future in as_completed(futures):
+            result = future.result()
+            if result is not None:
+                batch_results.append(result)
+            
+            count += 1
+            # 10종목마다 DB 중간 저장 (안전성)
+            if len(batch_results) >= 10:
+                send_to_db(pd.concat(batch_results, ignore_index=True))
+                batch_results = []
+                print(f"--- 중간 적재 완료 ({count}/{len(targets)}) ---")
+
+    # 남은 데이터 저장
+    if batch_results:
+        send_to_db(pd.concat(batch_results, ignore_index=True))
+    
+    print("✅ 모든 종목 수집 및 적재 완료")
 
 if __name__ == "__main__":
-    run_fundamental_crawler()
+    run_fundamental_crawler(max_workers=3)
