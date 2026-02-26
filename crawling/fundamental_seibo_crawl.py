@@ -43,6 +43,11 @@ HB_TO_COL = {
     "당기순이익(손실)": "net_income",
     "경상개발비": "rnd",
     "감가상각비": "depreciation",
+    "EPS(주당순이익)": "eps",
+    "단기금융부채": "short_debt",
+    "장기금융부채": "long_debt",
+    "현금및현금성자산(현금성자산)": "cash",
+
 }
 
 FINAL_COLS = [
@@ -135,7 +140,7 @@ A_TO_PERIOD = make_a_to_period(TO_YEAR, 4)
 
 def apply_units(wide: pd.DataFrame) -> pd.DataFrame:
     # money: fin_stmt가 <UNIT value="100000000"/>라서 억원 단위 -> 원으로 (x 1e8)
-    money_cols = ["revenue","operating_income","net_income","rnd","depreciation"]
+    money_cols = ["revenue","operating_income","net_income","rnd","depreciation","short_debt","long_debt","cash"]
     for c in money_cols:
         if c in wide.columns:
             wide[c] = pd.to_numeric(wide[c], errors="coerce") * 100_000_000
@@ -155,31 +160,24 @@ def apply_units(wide: pd.DataFrame) -> pd.DataFrame:
 def add_market_data(panel: pd.DataFrame) -> pd.DataFrame:
     panel = panel.copy()
 
-    # quarter(1~4) -> 분기말
     quarter_end_map = {1: "-03-31", 2: "-06-30", 3: "-09-30", 4: "-12-31"}
-
     ticker = panel["기업종목코드"].iloc[0]
 
     start_year = int(panel["year"].min())
-    end_year = int(panel["year"].max())
+    end_year   = int(panel["year"].max())
+
     price_df = fdr.DataReader(ticker, f"{start_year}-01-01", f"{end_year}-12-31")
 
     listing = fdr.StockListing("KRX")
     shares_row = listing[listing["Code"] == ticker]
     shares = shares_row["Stocks"].values[0] if len(shares_row) > 0 else np.nan
 
-    prices = []
-    market_caps = []
-
+    prices, market_caps = [], []
     for _, row in panel.iterrows():
         q = int(row["quarter"])
         date_str = f"{int(row['year'])}{quarter_end_map.get(q, '-12-31')}"
-
-        if date_str in price_df.index:
-            close_price = float(price_df.loc[date_str]["Close"])
-        else:
-            temp = price_df.loc[:date_str]
-            close_price = float(temp.iloc[-1]["Close"]) if len(temp) > 0 else np.nan
+        temp = price_df.loc[:date_str]
+        close_price = float(temp.iloc[-1]["Close"]) if len(temp) > 0 else np.nan
 
         prices.append(close_price)
         market_caps.append(close_price * shares if pd.notna(close_price) and pd.notna(shares) else np.nan)
@@ -187,6 +185,22 @@ def add_market_data(panel: pd.DataFrame) -> pd.DataFrame:
     panel["price"] = prices
     panel["shares"] = shares
     panel["market_cap"] = market_caps
+
+    # --- PER (EPS 기반) ---
+    if "eps" in panel.columns:
+        eps = pd.to_numeric(panel["eps"], errors="coerce").replace(0, np.nan)
+        panel["per"] = panel["price"] / eps
+
+    # --- EV / EBITDA ---
+    if "ebitda" in panel.columns:
+        short_debt = pd.to_numeric(panel["short_debt"], errors="coerce") if "short_debt" in panel.columns else pd.Series(np.nan, index=panel.index)
+        long_debt  = pd.to_numeric(panel["long_debt"],  errors="coerce") if "long_debt"  in panel.columns else pd.Series(np.nan, index=panel.index)
+        cash       = pd.to_numeric(panel["cash"],       errors="coerce") if "cash"       in panel.columns else pd.Series(np.nan, index=panel.index)
+
+        ev = panel["market_cap"] + short_debt.fillna(0) + long_debt.fillna(0) - cash.fillna(0)
+        panel["ev_ebitda"] = ev / pd.to_numeric(panel["ebitda"], errors="coerce").replace(0, np.nan)
+
+    panel = panel.drop(columns=["eps", "short_debt", "long_debt", "cash"], errors="ignore")
     return panel
 
 def build_quarter_panel(df_long, ticker, name):
@@ -225,8 +239,10 @@ def build_quarter_panel(df_long, ticker, name):
         if c not in wide.columns:
             wide[c] = np.nan
 
-    return wide[FINAL_COLS].sort_values(["year","quarter"]).reset_index(drop=True)
+    temp_cols = ["eps", "short_debt", "long_debt", "cash"]
+    keep_cols = list(dict.fromkeys(FINAL_COLS + [c for c in temp_cols if c in wide.columns]))
 
+    return wide[keep_cols].sort_values(["year","quarter"]).reset_index(drop=True)
 
 def run(csv_path, out_file="fin_all.csv"):
     df = pd.read_csv(csv_path, dtype=str)
@@ -276,6 +292,7 @@ def run(csv_path, out_file="fin_all.csv"):
                 panel = pd.concat([old, panel], ignore_index=True)
 
             panel = panel.drop_duplicates(["기업종목코드","year","quarter"], keep="last")
+            panel = panel.drop(columns=["eps"], errors="ignore")
             panel.to_csv(out_file, index=False, encoding="utf-8-sig")
             print("[OK] 저장:", ticker, name, "| total_rows =", len(panel))
 
