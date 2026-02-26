@@ -18,7 +18,7 @@ load_dotenv()
 
 BASE_URL = "https://seibro.or.kr"
 API_URL = "https://seibro.or.kr/websquare/engine/proworks/callServletService.jsp"
-TO_YEAR = datetime.now().year
+TO_YEAR = 2025
 TYPE_ = "연결"
 
 HEADERS = {
