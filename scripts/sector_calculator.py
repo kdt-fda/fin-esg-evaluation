@@ -252,9 +252,11 @@ def process_consumer_discretionary():
     
     macro_df = pd.DataFrame(columns=['Date'])
     if not csi_raw.empty:
+        csi_raw = csi_raw.sort_values('Date')
         csi_raw['csi_sentiment'] = csi_raw['Value'].shift(2) # 2개월 선행성
         macro_df = csi_raw[['Date', 'csi_sentiment']]
     if not cli_raw.empty:
+        cli_raw = cli_raw.sort_values('Date')
         cli_raw['cli_lag'] = cli_raw['Value'].shift(3) # 3개월 선행성
         if macro_df.empty: 
             macro_df = cli_raw[['Date', 'cli_lag']]
@@ -350,19 +352,33 @@ def process_consumer_staples():
     ticker_list = [s['ticker'] for s in stocks]
 
     ecos = EcosClient()
-    ecos_start, ecos_end = pd.to_datetime(FETCH_START_DATE).strftime("%Y%m"), datetime.now().strftime("%Y%m")
+    
+    base_date = pd.to_datetime(FETCH_START_DATE)
+    ecos_start = (base_date - pd.DateOffset(months=15)).strftime("%Y%m")
+    ecos_end = datetime.now().strftime("%Y%m")
+
     csi_raw = ecos.fetch_data('511Y002', ecos_start, ecos_end, 'FME')
     cpi_raw = ecos.fetch_data('901Y009', ecos_start, ecos_end, '0')
     
-    # 매크로 데이터프레임 구조 강제 정의
-    macro_df = pd.DataFrame(columns=['Date', 'csi_sentiment', 'cpi_yoy'])
+    # macro_df 생성 로직 안정화 (Merge 유실 방지)
+    macro_list = []
     if not csi_raw.empty:
+        csi_raw = csi_raw.sort_values('Date')
         csi_raw['csi_sentiment'] = csi_raw['Value'].shift(3)
-        macro_df = pd.merge(macro_df, csi_raw[['Date', 'csi_sentiment']], on='Date', how='outer')
+        macro_list.append(csi_raw[['Date', 'csi_sentiment']])
+
     if not cpi_raw.empty:
+        cpi_raw = cpi_raw.sort_values('Date')
         cpi_raw['cpi_yoy'] = cpi_raw['Value'].pct_change(12)
-        macro_df = pd.merge(macro_df, cpi_raw[['Date', 'cpi_yoy']], on='Date', how='outer')
-    macro_df['Date'] = pd.to_datetime(macro_df['Date']).dt.normalize()
+        macro_list.append(cpi_raw[['Date', 'cpi_yoy']])
+
+    # 리스트에 있는 DF들을 하나로 합침 (Date 기준)
+    if macro_list:
+        macro_df = macro_list[0]
+        for next_df in macro_list[1:]:
+            macro_df = pd.merge(macro_df, next_df, on='Date', how='outer')
+        macro_df['Date'] = pd.to_datetime(macro_df['Date']).dt.normalize()
+        macro_df = macro_df.sort_values('Date')
 
     usd_krw = safe_fetch_yf('USDKRW=X', FETCH_START_DATE, END_DATE, 'USD_KRW')
     tiger_cs = safe_fetch_fdr('227560', FETCH_START_DATE, END_DATE, 'ETF_Close')
@@ -401,18 +417,19 @@ def process_consumer_staples():
         m = pd.merge(m, usd_krw, on='Date', how='left')
         m = m.sort_values('Date')
         
-        # 2. 매크로 병합 (컬럼 없으면 생성)
+        # 2. 매크로 병합 후 일별 빈칸 채우기
         if not macro_df.empty:
-            m = pd.merge_asof(m, macro_df.sort_values('Date'), on='Date', direction='backward')
-        for col in ['csi_sentiment', 'cpi_yoy']:
-            if col not in m.columns: m[col] = np.nan
+            macro_df = macro_df.sort_values('Date')
+            m = pd.merge_asof(m.sort_values('Date'), macro_df, on='Date', direction='backward')
 
         # 3. 펀더멘털 병합 (컬럼 없으면 생성)
         stock_funda = df_funda[df_funda['ticker'] == ticker].sort_values('Date')
         if not stock_funda.empty:
             m = pd.merge_asof(m, stock_funda.drop(columns=['ticker']), on='Date', direction='backward')
-        for col in ['revenue_growth', 'ebitda', 'revenue']:
-            if col not in m.columns: m[col] = np.nan
+        
+        # ✨ [중요] 병합된 지표들을 일별 타임라인에 맞게 ffill
+        cols_to_fill = ['csi_sentiment', 'cpi_yoy', 'revenue_growth', 'ebitda', 'revenue']
+        m[cols_to_fill] = m[cols_to_fill].ffill()
 
         # 4. [계산] 실질 매출 성장률 및 에비타 마진
         m['real_revenue_growth'] = m['revenue_growth'] - m['cpi_yoy']
