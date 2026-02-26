@@ -112,33 +112,25 @@ def initialize_stock_db():
                 CREATE TABLE FUNDAMENTAL_TB (
                     ticker VARCHAR(10) NOT NULL,
                     year SMALLINT NOT NULL,
-                    reprt_code INT NOT NULL,
+                    quarter TINYINT NOT NULL,
                     revenue BIGINT,
                     revenue_growth DECIMAL(10,6),
                     operating_income BIGINT,
                     operating_margin DECIMAL(10,6),
                     net_income BIGINT,
                     depreciation BIGINT,
-                    ebitda BIGINT,
-                    equity BIGINT,
-                    assets BIGINT,
-                    liabilities BIGINT,
-                    cash BIGINT,
+                    rnd_expense BIGINT,
                     roe DECIMAL(10,6),
                     roa DECIMAL(10,6),
                     debt_ratio DECIMAL(10,6),
-                    cfo BIGINT,
-                    capex BIGINT,
-                    fcf BIGINT,
-                    end_date DATE NOT NULL,
                     price INT,
                     shares BIGINT,
                     market_cap BIGINT,
                     per DECIMAL(16,6),
                     pbr DECIMAL(16,6),
-                    ev BIGINT,
+                    ebitda BIGINT,
                     ev_ebitda DECIMAL(16,6),
-                    PRIMARY KEY(ticker, year, reprt_code),
+                    PRIMARY KEY(ticker, year, quarter),
                     CONSTRAINT fk_funda_ticker
                         FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                 );
@@ -311,17 +303,6 @@ def initialize_stock_db():
                     z_score DECIMAL(18,12),
                     PRIMARY KEY(trade_date, ticker),
                     CONSTRAINT fk_mate_ticker
-                        FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
-                );
-            """,
-            "RND_TB": """
-                CREATE TABLE RND_TB (
-                    ticker VARCHAR(10) NOT NULL,
-                    year SMALLINT NOT NULL,
-                    quarter ENUM('Q1','Q2','Q3','Q4') NOT NULL,
-                    rnd_expense BIGINT,
-                    PRIMARY KEY(ticker, year, quarter),
-                    CONSTRAINT fk_rnd_ticker
                         FOREIGN KEY(ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                 );
             """,

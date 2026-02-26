@@ -367,12 +367,25 @@ def process_consumer_staples():
     usd_krw = safe_fetch_yf('USDKRW=X', FETCH_START_DATE, END_DATE, 'USD_KRW')
     tiger_cs = safe_fetch_fdr('227560', FETCH_START_DATE, END_DATE, 'ETF_Close')
 
+    # DB에서 재무 데이터 수집
+    # print("📡 DB에서 재무 데이터(매출성장률, EBITDA) 수집 중...") 
     conn = _connect()
     try:
-        # end_date를 Date로 확실히 Alias
-        funda_sql = f"SELECT ticker, end_date as Date, revenue_growth, ebitda, revenue FROM FUNDAMENTAL_TB WHERE ticker IN ({str(ticker_list)[1:-1]})"
-        df_funda = pd.read_sql(funda_sql, conn)
-        df_funda['Date'] = pd.to_datetime(df_funda['Date']).dt.normalize()
+        # year, quarter 기반 날짜 생성
+        funda_sql = f"""
+            SELECT ticker, year, quarter, revenue_growth, ebitda, revenue
+            FROM FUNDAMENTAL_TB
+            WHERE ticker IN ({str(ticker_list)[1:-1]})
+            """
+        df_funda_raw = pd.read_sql(funda_sql, conn)
+
+        # 분기 종료일 매핑을 통해 병합용 Date 생성
+        quarter_map = {1: '-03-31', 2: '-06-30', 3: '-09-30', 4: '-12-31'}
+        df_funda_raw['Date'] = pd.to_datetime(
+            df_funda_raw['year'].astype(str) + df_funda_raw['quarter'].map(quarter_map)
+        )
+        df_funda = df_funda_raw[['ticker', 'Date', 'revenue_growth', 'ebitda', 'revenue']]
+
     finally:
         conn.close()
 
@@ -401,9 +414,10 @@ def process_consumer_staples():
         for col in ['revenue_growth', 'ebitda', 'revenue']:
             if col not in m.columns: m[col] = np.nan
 
-        # 4. [계산] 0 채우기 없이 진행 -> 결과가 NaN이면 DB에 NULL로 들어감
+        # 4. [계산] 실질 매출 성장률 및 에비타 마진
         m['real_revenue_growth'] = m['revenue_growth'] - m['cpi_yoy']
-        m['ebitda_margin'] = m['ebitda'] / m['revenue']
+        m['ebitda_margin'] = m['ebitda'] / (m['revenue'] + 1e-9)
+        
         rel_price = m['Close'] / (m['ETF_Close'] + 1e-9)
         m['z_score'] = (rel_price - rel_price.rolling(120).mean()) / (rel_price.rolling(120).std() + 1e-9)
         
@@ -793,39 +807,31 @@ def process_healthcare():
     kospi200 = safe_fetch_fdr('KS200', FETCH_START_DATE, END_DATE, 'KOSPI200_Close')
     tiger_hc = safe_fetch_fdr('227540', FETCH_START_DATE, END_DATE, 'ETF_Close')
     
-    # 3. DB에서 재무 및 R&D 데이터 수집 (FUNDAMENTAL_TB, RND_TB)
-    print("📡 DB에서 재무(PBR) 및 R&D 투자 데이터 수집 중...")
+    # 3. DB에서 재무 데이터 수집 (FUNDAMENTAL_TB)
+    print("📡 DB에서 재무 데이터(PBR, 매출, R&D) 수집 중...")
     conn = _connect()
     try:
-        # PBR 및 매출 데이터
         funda_sql = f"""
-            SELECT ticker, end_date as Date, pbr, revenue 
+            SELECT ticker, year, quarter, pbr, revenue, rnd_expense 
             FROM FUNDAMENTAL_TB 
             WHERE ticker IN ({str(ticker_list)[1:-1]})
         """
-        df_funda = pd.read_sql(funda_sql, conn)
-        df_funda['Date'] = pd.to_datetime(df_funda['Date']).dt.normalize()
-
-        # 쿼리에서 year와 quarter만 가져옴
-        rnd_sql = f"""
-            SELECT ticker, year, quarter, rnd_expense 
-            FROM RND_TB 
-            WHERE ticker IN ({str(ticker_list)[1:-1]})
-        """
-        df_rnd_raw = pd.read_sql(rnd_sql, conn)
+        df_funda_raw = pd.read_sql(funda_sql, conn)
         
         # [핵심] year와 quarter를 바탕으로 분기 말 날짜 생성 (Merge를 위함)
-        quarter_map = {'Q1': '-03-31', 'Q2': '-06-30', 'Q3': '-09-30', 'Q4': '-12-31'}
-        df_rnd_raw['Date'] = pd.to_datetime(
-            df_rnd_raw['year'].astype(str) + df_rnd_raw['quarter'].map(quarter_map)
+        quarter_map = {1: '-03-31', 2: '-06-30', 3: '-09-30', 4: '-12-31'}
+        df_funda_raw['Date'] = pd.to_datetime(
+            df_funda_raw['year'].astype(str) + df_funda_raw['quarter'].map(quarter_map)
         )
-        df_rnd = df_rnd_raw[['ticker', 'Date', 'rnd_expense']]
+
+        # R&D 비율 계산 (R&D 비용 / 매출)
+        df_funda_raw['rnd_ratio'] = (df_funda_raw['rnd_expense'] / (df_funda_raw['revenue'] + 1e-9)) * 100
+        
+        # 필요한 컬럼만 추출
+        df_biotech = df_funda_raw[['ticker', 'Date', 'pbr', 'rnd_ratio']]
+
     finally:
         conn.close()
-
-    # 재무 + R&D 통합
-    df_biotech = pd.merge(df_funda, df_rnd, on=['ticker', 'Date'], how='outer')
-    df_biotech['rnd_ratio'] = (df_biotech['rnd_expense'] / (df_biotech['revenue'] + 1e-9)) * 100
 
     all_results = []
 
@@ -840,13 +846,15 @@ def process_healthcare():
         m = pd.merge(m, kospi200, on='Date', how='left')
         m = m.sort_values('Date')
         
-        # [핵심] 병합 대상 데이터가 비어있어도 컬럼은 생성해줘야 계산 에러가 안 남
-        stock_data = df_biotech[df_biotech['ticker'] == ticker].sort_values('Date')
-        if not stock_data.empty:
-            m = pd.merge_asof(m, stock_data.drop(columns=['ticker']), on='Date', direction='backward')
+        # 해당 종목의 재무 데이터만 필터링
+        stock_funda = df_biotech[df_biotech['ticker'] == ticker].sort_values('Date')
         
-        # 중요: 계산에 쓰이는 컬럼이 병합 실패로 누락되었다면 NaN으로 생성
-        for col in ['pbr', 'rnd_ratio', 'revenue']:
+        if not stock_funda.empty:
+            # 시점 정합성을 위해 merge_asof 사용 (과거 공시 기준 유지)
+            m = pd.merge_asof(m, stock_funda.drop(columns=['ticker']), on='Date', direction='backward')
+        
+        # 컬럼 누락 방지
+        for col in ['pbr', 'rnd_ratio']:
             if col not in m.columns: m[col] = np.nan
 
         # [지표 계산] 0 채우기 제거

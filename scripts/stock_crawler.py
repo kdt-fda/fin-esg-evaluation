@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import time
 import calendar
 from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor
 
 # .env 파일 로드
 load_dotenv()
@@ -27,7 +28,8 @@ def _connect():
         user=user,
         password=password,
         database=db_name,
-        charset='utf8mb4'
+        charset='utf8mb4',
+        cursorclass=pymysql.cursors.DictCursor
     )
     return conn
 
@@ -46,27 +48,42 @@ def get_targets_from_db():
     finally:
         conn.close()
 
+def get_last_update_date(ticker, cur):
+    sql = "SELECT MAX(trade_date) as last_date FROM STOCK_TB WHERE ticker = %s"
+    cur.execute(sql, (ticker,))
+    result = cur.fetchone()
+
+    # 결과가 딕셔너리 형태일 때 (이름으로 접근)
+    if isinstance(result, dict) and result.get('last_date'):
+        return (result['last_date'] + timedelta(days=1)).strftime("%Y%m%d")
+    # 결과가 튜플 형태일 때 (인덱스로 접근)
+    elif isinstance(result, (tuple, list)) and result[0]:
+        return (result[0] + timedelta(days=1)).strftime("%Y%m%d")
+    
+    return "20220601"
+
 # ==========================================
 # 2. 데이터 수집 (시작일 2022-06-01 고정)
 # ==========================================
-def fetch_all_data(ticker):
+def fetch_all_data(ticker, s_date):
     ticker = clean_ticker(ticker)
-    # 2023-01-01에 MA120 지표를 만들기 위해 충분한 과거 데이터 확보
-    s_date = "20220601"
     e_date = datetime.now().strftime("%Y%m%d")
+    
+    # 지표 계산(MA120 등)을 위해 수집 시작일보다 200일 전 데이터부터 실제로 가져옴
+    fetch_start = (datetime.strptime(s_date, "%Y%m%d") - timedelta(days=200)).strftime("%Y%m%d")
     
     try:
         # 1) 가격 정보
-        df_price = stock.get_market_ohlcv(s_date, e_date, ticker)
+        df_price = stock.get_market_ohlcv(fetch_start, e_date, ticker)
         if df_price.empty: return pd.DataFrame()
         
         # 2) 수급 정보
-        df_inv = stock.get_market_trading_value_by_date(s_date, e_date, ticker)
+        df_inv = stock.get_market_trading_value_by_date(fetch_start, e_date, ticker)
         df_inv = df_inv.rename(columns={'외국인합계':'Foreign_Net_Amt', '기관합계':'Inst_Net_Amt'})
         
         # 3) 공매도 정보
         try:
-            df_short = stock.get_shorting_balance_by_date(s_date, e_date, ticker)
+            df_short = stock.get_shorting_balance_by_date(fetch_start, e_date, ticker)
             found_col = next((c for c in ['공매도잔고금액', '공매도금액', '잔고금액'] if c in df_short.columns), None)
             if found_col:
                 df_short_val = df_short[[found_col]].rename(columns={found_col: 'Short_Balance'})
@@ -124,42 +141,36 @@ def calculate_indicators(df):
     return df.fillna(0)
 
 # ==========================================
-# 4. 메인 실행 및 DB 전송 (executemany 최적화)
+# 4. 개별 종목 처리 함수 (병렬용)
 # ==========================================
-def run_stock_crawler():
-    targets = get_targets_from_db()
-    if not targets: return
-    
-    print(f"🚀 {len(targets)}개 종목 2023-01-01 이후 전체 데이터 수집 시작")
-    conn = _connect()
+def process_single_stock(target):
+    if isinstance(target, dict):
+        ticker, name = target['ticker'], target['stock_name']
+    else:
+        ticker, name = target[0], target[1]
 
     required_cols = ['MA5', 'MA20', 'MA60', 'MA120', 'BB_Upper', 'BB_Lower', 'BB_Breakout', 'RSI', 'MACD', 'MACD_Sig', 'GC_5_20', 'DC_5_20', 'MSCI_Event']
     
+    conn = _connect()
     try:
-        cur = conn.cursor()
-        for i, target in enumerate(targets):
-            ticker, name = target['ticker'], target['stock_name']
+        with conn.cursor() as cur:
+            # 1. 마지막 날짜 확인
+            s_date = get_last_update_date(ticker, cur)
+            if s_date > datetime.now().strftime("%Y%m%d"):
+                return f"✅ {name}({ticker}): 이미 최신 상태"
+
+            # 2. 데이터 수집 및 지표 계산
+            df = fetch_all_data(ticker, s_date)
+            if df.empty: return f"⚠️ {name}({ticker}): 수집 데이터 없음"
             
-            df = fetch_all_data(ticker)
-            if df.empty: continue
             df = calculate_indicators(df)
 
-            # 필요한 컬럼이 모두 포함되어 있는지 확인
-            missing_cols = [col for col in required_cols if col not in df.columns]
-            if missing_cols:
-                print(f"[{i+1}/{len(targets)}] {name}({ticker}): 지표 누락 ({missing_cols}) - Skip")
-                continue
-            
-            # 2023-01-01 이후이면서 지표가 모두 계산된 행만 필터링
-            df_to_save = df[(df.index >= "2023-01-01")].dropna(subset=required_cols)
-            
-            if df_to_save.empty:
-                print(f"[{i+1}/{len(targets)}] {name}({ticker}): 데이터 부족 - Skip")
-                continue
+            # 3. 신규 데이터 필터링 (s_date 이후만)
+            df_to_save = df[df.index >= datetime.strptime(s_date, "%Y%m%d")].dropna(subset=required_cols)
+            if df_to_save.empty: return f"ℹ️ {name}({ticker}): 추가할 신규 데이터 없음"
 
             data_list = []
             for date, row in df_to_save.iterrows():
-                # executemany 에러 방지를 위해 numpy 타입을 기본 python 타입으로 변환
                 val = (
                     date.strftime('%Y-%m-%d'), ticker, name,
                     int(row['Open']), int(row['High']), int(row['Low']), int(row['Close']), int(row['Volume']),
@@ -182,19 +193,32 @@ def run_stock_crawler():
                     close=VALUES(close), volume=VALUES(volume), short_balance=VALUES(short_balance),
                     foreign_net_amt=VALUES(foreign_net_amt), inst_net_amt=VALUES(inst_net_amt);
             """
-            if data_list:
-                cur.executemany(sql, data_list)
-                conn.commit()
-                print(f"[{i+1}/{len(targets)}] {name}({ticker}) {len(data_list)}건 완료")
+            cur.executemany(sql, data_list)
+            conn.commit()
+            return f"🚀 {name}({ticker}): {len(data_list)}건 업데이트 완료"
             
-            time.sleep(0.05)
-            
-        print(f"\n✅ STOCK_TB 업데이트 완료!")
     except Exception as e:
-        print(f"\n❌ 에러: {e}")
-        conn.rollback()
+        return f"❌ {name}({ticker}) 에러: {e}"
     finally:
         conn.close()
+
+# ==========================================
+# 5. 메인 실행부 (병렬 처리 적용)
+# ==========================================
+def run_stock_crawler():
+    targets = get_targets_from_db()
+    if not targets: return
+    
+    print(f"🚀 {len(targets)}개 종목 병렬 증분 수집 시작 (Thread: 6)")
+    
+    # 🎯 ThreadPoolExecutor를 사용한 병렬 처리
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        results = list(executor.map(process_single_stock, targets))
+    
+    for res in results:
+        print(res)
+        
+    print(f"\n✅ STOCK_TB 모든 작업 완료!")
 
 if __name__ == "__main__":
     run_stock_crawler()
