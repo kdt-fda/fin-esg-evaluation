@@ -19,12 +19,12 @@ class StockDataJoiner:
             'HC': 'HEALTHCARE_TB'
         }
 
-        # 보고서 코드별 분기 종료일 매핑 (내부 로직용)
-        self.reprt_date_map = {
-            '11013': '03-31', # 1분기
-            '11012': '06-30', # 2분기
-            '11014': '09-30', # 3분기
-            '11011': '12-31'  # 4분기(사업보고서)
+        # 분기별 종료일 매핑 (year와 결합하여 날짜 생성용)
+        self.quarter_date_map = {
+            1: '03-31', # 1분기
+            2: '06-30', # 2분기
+            3: '09-30', # 3분기
+            4: '12-31'  # 4분기(사업보고서)
         }
 
     def _connect(self):
@@ -69,11 +69,11 @@ class StockDataJoiner:
         """
         conn = self._connect()
         try:
-            # year >= start_year 조건을 통해 2022년 자료부터 확보
+            # 정렬 기준 year, quarter 순
             sql = f"""
                 SELECT * FROM FUNDAMENTAL_TB 
                 WHERE ticker = %s AND year >= %s
-                ORDER BY end_date ASC
+                ORDER BY year ASC, quarter ASC
             """
             df = pd.read_sql(sql, conn, params=[ticker, start_year])
             return df
@@ -150,12 +150,11 @@ class StockDataJoiner:
         df_daily['trade_date'] = pd.to_datetime(df_daily['trade_date'])
         
         if not df_funda.empty:
-            # reprt_code 기반 가상 종료일(fs_date) 생성
+            # year, quarter 기반 가상 종료일(fs_date) 생성
             def create_fs_date(row):
-                code = str(row['reprt_code']).strip()
-                date_suffix = self.reprt_date_map.get(code)
-                if date_suffix:
-                    return pd.to_datetime(f"{int(row['year'])}-{date_suffix}")
+                q_month_day = self.quarter_date_map.get(int(row['quarter']))
+                if q_month_day:
+                    return pd.to_datetime(f"{int(row['year'])}-{q_month_day}")
                 return None
 
             df_funda['fs_date'] = df_funda.apply(create_fs_date, axis=1)
@@ -174,15 +173,11 @@ class StockDataJoiner:
             )
             
             # 불필요한 컬럼 및 중복 컬럼 정리
-            # 1) ticker_y(재무쪽 티커) 제거 및 ticker_x를 ticker로 변경
-            if 'ticker_y' in df_final.columns:
-                df_final = df_final.drop(columns=['ticker_y'])
-            if 'ticker_x' in df_final.columns:
-                df_final = df_final.rename(columns={'ticker_x': 'ticker'})
-
-            # 2) year, reprt_code, price 및 내부용 날짜 컬럼 제거
-            drop_cols = ['fs_date', 'end_date', 'year', 'reprt_code', 'price']
+            drop_cols = ['fs_date', 'year', 'quarter', 'price', 'ticker_y']
             df_final = df_final.drop(columns=[c for c in drop_cols if c in df_final.columns])
+
+            if 'ticker_x' in df_final.columns:
+                df_final = df_final.rename(columns={'ticker_x': 'ticker'})         
                 
         else:
             df_final = df_daily
@@ -191,5 +186,5 @@ class StockDataJoiner:
         df_final = df_final.loc[:, ~df_final.columns.duplicated()]
         df_final = df_final.ffill()
 
-        print(f"[{stock_name}] 모델링 데이터셋 생성 완료 (reprt_code 기반): {df_final.shape}")
+        print(f"[{stock_name}] 모델링 데이터셋 생성 완료 -> {df_final.shape}")
         return df_final
