@@ -125,11 +125,13 @@ def load_company_mapping_from_db():
             cur.execute("SELECT MAX(trade_date) as last_date FROM NEWS_TB")
             last_date = cur.fetchone()['last_date']
 
-            # 3. 다음 날부터 수집 시작
-            start_date = last_date + dt.timedelta(days=1)
+            # 3. 안전 마진 적용: 마지막 날짜로부터 1일 전부터 수집 시작
+            # (ON DUPLICATE KEY UPDATE 덕분에 중복 데이터는 업데이트만 됨)
+            start_date = last_date - dt.timedelta(days=1)
             end_date = dt.date.today()
             
             log(f"✅ DB에서 {len(companies)}개 종목 로드 완료")
+            log(f"✅ 수집 시작일 설정: {start_date}")
             return mapping, companies, start_date, end_date
 
     finally:
