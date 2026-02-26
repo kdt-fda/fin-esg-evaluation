@@ -19,7 +19,7 @@ class StockDataJoiner:
             'HC': 'HEALTHCARE_TB'
         }
 
-        # 분기별 종료일 매핑 (year와 결합하여 날짜 생성용)
+        # 분기별 종료일 매핑 (year와 결합하여 날짜 생성)
         self.quarter_date_map = {
             1: '03-31', # 1분기
             2: '06-30', # 2분기
