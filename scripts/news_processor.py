@@ -126,7 +126,7 @@ def load_company_mapping_from_db():
             last_date = cur.fetchone()['last_date']
 
             # 3. 안전 마진 적용: 마지막 날짜로부터 1일 전부터 수집 시작
-            # (ON DUPLICATE KEY UPDATE 덕분에 중복 데이터는 업데이트만 됨)
+            # 중복 데이터는 업데이트만
             start_date = last_date - dt.timedelta(days=1)
             end_date = dt.date.today()
             
