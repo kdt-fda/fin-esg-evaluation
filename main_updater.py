@@ -1,5 +1,16 @@
-import logging
 import sys
+
+# Python 3.12+ pkg_resources 호환성 패치
+try:
+    import pkg_resources
+except ImportError:
+    try:
+        from pip._vendor import pkg_resources
+    except ImportError:
+        import setuptools.pkg_resources as pkg_resources
+    sys.modules["pkg_resources"] = pkg_resources
+
+import logging
 import os
 import time
 import schedule
