@@ -1,0 +1,27 @@
+services:
+  # 크롤러
+  crawler:
+    image: fin-crawler-bot:latest
+    container_name: stock-crawler-container
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      # 로컬 폴더와 컨테이너 내부 폴더 연결 (로그 및 모델 캐시 보존)
+      - ./model_cache:/app/model_cache
+      - ./update_log.log:/app/update_log.log
+    tty: true
+    stdin_open: true
+
+  # 분석기 (추가 예정)
+  #analyzer:
+  #  build:
+  #    context: .
+  #    dockerfile: Dockerfile.analyzer
+  #  container_name: stock-analyzer-container
+  #  restart: on-failure
+  #  env_file:
+  #    - .env
+  #  # 크롤러가 데이터를 다 쌓은 뒤에 동작해야 한다면 의존성 추가
+  #  depends_on:
+  #    - crawler

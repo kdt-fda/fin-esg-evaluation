@@ -1,5 +1,8 @@
 # 1. 일반 패키지들
 setuptools
+setuptools-scm
+wheel
+
 python-dotenv
 schedule
 
@@ -12,7 +15,7 @@ pymysql
 requests
 beautifulsoup4
 lxml
-FinanceDataReader
+finance-datareader==0.9.102
 yfinance
 pykrx
 
