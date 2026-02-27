@@ -1,0 +1,28 @@
+# 1. 베이스 이미지 선택
+FROM python:3.10-slim
+
+# 2. 한국 시간 설정
+RUN apt-get update && apt-get install -y tzdata && \
+    ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime && \
+    echo "Asia/Seoul" > /etc/timezone
+
+# 3. 컨테이너 내부 작업 폴더 설정
+WORKDIR /app
+
+# 4. 라이브러리 설치
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
+
+# 5. 내 코드 전부 복사
+COPY . .
+
+# 6. 인공지능 모델 저장 폴더 (FinBERT 모델을 보관할 장소)
+ENV TRANSFORMERS_CACHE=/app/model_cache
+RUN mkdir -p /app/model_cache
+
+# 7. 환경 변수 설정 (Python 출력 로그 확인용)
+ENV PYTHONUNBUFFERED=1
+
+# 8. 실행
+CMD ["python", "main_updater.py"]

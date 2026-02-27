@@ -1,25 +1,21 @@
-# [기본 데이터 처리 및 수치 계산]
-pandas
-numpy
-pandas_ta
-
-# [시장 데이터 및 수집]
-FinanceDataReader
-yfinance
-pykrx
-beautifulsoup4
-lxml
-requests
-
-# [데이터베이스]
-pymysql
-
-# [인공지능 및 딥러닝 - CPU 전용 최적화]
---index-url https://download.pytorch.org/whl/cpu
-torch
-transformers
-
-# [시스템 및 스케줄링]
+# 1. 일반 패키지들
 setuptools
 python-dotenv
 schedule
+
+pandas
+numpy
+
+pymysql
+
+requests
+beautifulsoup4
+lxml
+FinanceDataReader
+yfinance
+pykrx
+
+# 2. PyTorch 관련
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+transformers
