@@ -5,6 +5,7 @@ schedule
 
 pandas
 numpy
+pandas_ta
 
 pymysql
 
