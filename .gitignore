@@ -208,5 +208,6 @@ __marimo__/
 
 update_log.log
 logs/
-modeling/__pycache__/
+**/__pycache__/
+model_cache/
 docs_cache/
