@@ -3,7 +3,7 @@ import requests
 import pymysql
 import numpy as np
 import pandas as pd
-import FinanceDataReader as fdr
+import yfinance as yf
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -135,8 +135,30 @@ def run_common_indicator_calculator():
     print("🚀 공통 지표 계산 및 업데이트 중...")
     
     end_date = datetime.now().strftime("%Y-%m-%d")
-    df_kospi = fdr.DataReader('KS200', start=FETCH_START_DATE, end=end_date).reset_index()
-    df_kospi = df_kospi.rename(columns={'Date': 'trade_date', 'Close': 'close_kospi200'})[['trade_date', 'close_kospi200']]
+
+    try:
+        # 🎯 KRX 차단을 우회하기 위해 Yahoo Finance(^KS200) 사용
+        print(f"📡 Yahoo Finance(^KS200)로부터 데이터 수집 중...")
+        yf_data = yf.download('^KS200', start=FETCH_START_DATE, end=end_date, progress=False, auto_adjust=True)
+        
+        if yf_data.empty:
+            raise ValueError("데이터가 비어 있습니다.")
+
+        # MultiIndex 해제 및 컬럼 정리
+        if isinstance(yf_data.columns, pd.MultiIndex):
+            yf_data.columns = yf_data.columns.get_level_values(0)
+            
+        df_kospi = yf_data[['Close']].reset_index()
+        df_kospi.columns = ['trade_date', 'close_kospi200']
+        
+        # 타임존 제거 및 날짜 정규화 (필수)
+        df_kospi['trade_date'] = pd.to_datetime(df_kospi['trade_date']).dt.tz_localize(None).dt.normalize()
+        
+        print(f"✅ 수집 성공: 최종 날짜 {df_kospi['trade_date'].max().date()}")
+
+    except Exception as e:
+        print(f"❌ KOSPI 200 수집 최종 실패: {e}")
+        return
     
     client = EcosClient()
     ecos_start = pd.to_datetime(FETCH_START_DATE).strftime("%Y%m")
