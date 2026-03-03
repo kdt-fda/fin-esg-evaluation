@@ -184,7 +184,8 @@ def process_single_stock(target):
             df = calculate_indicators(df)
 
             # 3. 신규 데이터 필터링 (s_date 이후만)
-            df_to_save = df[df.index >= datetime.strptime(s_date, "%Y%m%d")].dropna(subset=required_cols)
+            target_start = max(datetime.strptime(s_date, "%Y%m%d"), datetime(2023, 1, 1))
+            df_to_save = df[df.index >= target_start].dropna(subset=required_cols)
             if df_to_save.empty: return f"ℹ️ {name}({ticker}): 추가할 신규 데이터 없음"
 
             data_list = []
