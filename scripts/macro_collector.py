@@ -66,7 +66,7 @@ def fetch_fred_series(series_id, colname, start_date):
 # 3. 메인 실행 파이프라인 (병합 및 전처리 통합)
 # ==========================================
 def run_macro_collector(is_initial=False):
-    # 1. 수집 기간 설정
+    # 수집 기간 설정
     if is_initial:
         s_d, s_m, s_q, s_fred = "20220101", "202201", "2021Q1", "2022-01-01"
         trade_s_m = "202101"
@@ -82,7 +82,7 @@ def run_macro_collector(is_initial=False):
 
     dfs = {}
 
-    # 2. 데이터 수집 (ECOS)
+    # 데이터 수집 (ECOS)
     daily_vars = [("ktb3y", "817Y002", "010200000"), ("ktb10y", "817Y002", "010210000"), 
                   ("usdkrw", "731Y003", "0000003"), ("base_rate", "722Y001", "0101000")]
     for name, stat, item in daily_vars:
@@ -94,18 +94,13 @@ def run_macro_collector(is_initial=False):
     for name, stat, item in monthly_vars:
         dfs[name] = ecos_fetch(stat, item, "M", s_m, e_m, name)
 
-    # 수출입 YoY
-    ex_raw = ecos_fetch("901Y119", "T002", "M", trade_s_m, e_m, "export_total")
-    if not ex_raw.empty:
-        ex_df = ex_raw.groupby("date")["export_total"].sum().reset_index()
-        ex_df["export_yoy"] = ex_df["export_total"].pct_change(12) * 100
-        dfs["export"] = ex_df
-
-    im_raw = ecos_fetch("901Y119", "T004", "M", trade_s_m, e_m, "import_total")
-    if not im_raw.empty:
-        im_df = im_raw.groupby("date")["import_total"].sum().reset_index()
-        im_df["import_yoy"] = im_df["import_total"].pct_change(12) * 100
-        dfs["import"] = im_df
+    # 수출입 YoY (계산 로직 통합)
+    for mode, stat_code in [("export", "T002"), ("import", "T004")]:
+        raw = ecos_fetch("901Y119", stat_code, "M", trade_s_m, e_m, f"{mode}_total")
+        if not raw.empty:
+            df_trade = raw.groupby("date")[f"{mode}_total"].sum().reset_index().sort_values("date")
+            df_trade[f"{mode}_yoy"] = df_trade[f"{mode}_total"].pct_change(12) * 100
+            dfs[mode] = df_trade[["date", f"{mode}_yoy"]]
 
     # GDP QoQ
     gdp_df = ecos_fetch("200Y108", "10601", "Q", s_q, e_q, "gdp_level")
@@ -113,44 +108,34 @@ def run_macro_collector(is_initial=False):
         gdp_df["gdp_qoq"] = (gdp_df["gdp_level"] / gdp_df["gdp_level"].shift(1) - 1) * 100
         dfs["gdp"] = gdp_df
 
-    # 3. 데이터 수집 (FRED)
-    fred_vars = {"us_cpi": "CPIAUCSL", "us_core_cpi": "CPILFESL", "us_core_pce": "PCEPILFE", "us_unrate": "UNRATE", "us_init_claims": "ICSA", "us_policy_rate": "EFFR", "us_ust_3y": "DGS3", "us_ust_10y": "DGS10", "jpy3": "IR3TIB01JPM156N", "jpy10": "IRLTLT01JPM156N", "pmi": "IPMAN"}
+    # 데이터 수집 (FRED)
+    fred_vars = {"us_cpi": "CPIAUCSL", "us_core_cpi": "CPILFESL", "us_core_pce": "PCEPILFE",
+                 "us_unrate": "UNRATE", "us_init_claims": "ICSA", "us_policy_rate": "EFFR",
+                 "us_ust_3y": "DGS3", "us_ust_10y": "DGS10", "jpy3": "IR3TIB01JPM156N",
+                 "jpy10": "IRLTLT01JPM156N", "pmi": "IPMAN"}
     for col, sid in fred_vars.items():
         dfs[col] = fetch_fred_series(sid, col, s_fred)
 
-    # 4. 통합 및 전처리 (핵심 수정 부분)
-    # 🎯 [1단계] 수출입 YoY를 "월간 원본"에서 미리 계산 (ffill 하기 전에!)
-    if "export" in dfs and not dfs["export"].empty:
-        df_ex = dfs["export"].sort_values("date")
-        # 월간 데이터이므로 pct_change(12)가 정확히 작년 이달과 비교함
-        df_ex["export_yoy"] = df_ex["export_total"].pct_change(12) * 100
-        dfs["export"] = df_ex[["date", "export_yoy"]] # yoy만 남김
-
-    if "import" in dfs and not dfs["import"].empty:
-        df_im = dfs["import"].sort_values("date")
-        df_im["import_yoy"] = df_im["import_total"].pct_change(12) * 100
-        dfs["import"] = df_im[["date", "import_yoy"]] # yoy만 남김
-
-    # 🎯 [2단계] 모든 데이터 병합
-    valid_dfs = [v for k, v in dfs.items() if v is not None and not v.empty]
+    # 통합 및 전처리
+    valid_dfs = [v for v in dfs.values() if v is not None and not v.empty]
     merged = valid_dfs[0]
     for d in valid_dfs[1:]:
         merged = pd.merge(merged, d, on="date", how="outer")
 
     merged = merged.sort_values("date")
 
-    # 🎯 [3단계] 병합된 "계산 완료된 YoY"를 오늘 날짜까지 ffill
+    # 결측치 채우기 (이미 계산된 YoY 등을 오늘 날짜까지 확장)
     all_cols = [c for c in merged.columns if c != 'date']
-    # 여기서 ffill을 하면 이미 숫자가 채워진 YoY 값이 2월까지 복사됩니다!
     merged[all_cols] = merged[all_cols].ffill().bfill()
 
-    # 🎯 [4단계] 나머지 파생 변수 계산
+    # 파생 변수 계산
     merged["rate_diff_policy"] = merged["us_policy_rate"] - merged["base_rate"]
     merged["rate_diff_3y"] = merged["us_ust_3y"] - merged["ktb3y"]
     merged["rate_diff_10y"] = merged["us_ust_10y"] - merged["ktb10y"]
 
-    # 5. 분석 시작 시점 이후 필터링
+    # 최종 필터링 및 컬럼명 통일
     merged = merged[merged["date"] >= FINAL_CUT_START].reset_index(drop=True)
+    merged = merged.rename(columns={'date': 'trade_date'})
 
     # DB 적재
     if not merged.empty:
