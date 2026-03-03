@@ -821,7 +821,7 @@ def process_healthcare():
     # 2. 외부 공통 지표 수집 (코스피 200, 헬스케어 ETF)
     # TIGER 200 헬스케어(227540)
     print("📡 시장 지수 및 헬스케어 ETF 데이터 수집 중...")
-    kospi200 = safe_fetch_fdr('KS200', FETCH_START_DATE, END_DATE, 'KOSPI200_Close')
+    kospi200 = safe_fetch_yf('^KS200', FETCH_START_DATE, END_DATE, 'KOSPI200_Close')
     tiger_hc = safe_fetch_fdr('227540', FETCH_START_DATE, END_DATE, 'ETF_Close')
     
     # 3. DB에서 재무 데이터 수집 (FUNDAMENTAL_TB)
@@ -1074,7 +1074,7 @@ def process_industrials():
 
     # 시장 지수 및 섹터 ETF (TIGER 200 산업재: 227550)
     print("📡 KOSPI 200 및 산업재 ETF 데이터 수집 중...")
-    kospi200 = safe_fetch_fdr('KS200', FETCH_START_DATE, END_DATE, 'KOSPI200_Close')
+    kospi200 = safe_fetch_yf('^KS200', FETCH_START_DATE, END_DATE, 'KOSPI200_Close')
     tiger_ig = safe_fetch_fdr('227550', FETCH_START_DATE, END_DATE, 'ETF_Close')
 
     all_results = []
