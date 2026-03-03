@@ -33,6 +33,13 @@ def _connect():
     )
     return conn
 
+def safe_int(val):
+    try:
+        if pd.isna(val): return None
+        return int(val)
+    except:
+        return None
+
 def clean_ticker(x):
     x = str(x).strip()
     if x.lower() == 'nan' or x == '': return ''
@@ -78,9 +85,14 @@ def fetch_all_data(ticker, s_date):
         if df_price.empty: return pd.DataFrame()
         
         # 2) 수급 정보
-        df_inv = stock.get_market_trading_value_by_date(fetch_start, e_date, ticker)
-        df_inv = df_inv.rename(columns={'외국인합계':'Foreign_Net_Amt', '기관합계':'Inst_Net_Amt'})
-        
+        df_inv = pd.DataFrame(index=df_price.index, columns=['Foreign_Net_Amt', 'Inst_Net_Amt'])
+        try:
+            temp_inv = stock.get_market_trading_value_by_date(fetch_start, e_date, ticker)
+            if not temp_inv.empty and '외국인합계' in temp_inv.columns:
+                df_inv['Foreign_Net_Amt'] = temp_inv['외국인합계']
+                df_inv['Inst_Net_Amt'] = temp_inv['기관합계']
+        except: pass # 실패 시 None 유지
+
         # 3) 공매도 정보
         try:
             df_short = stock.get_shorting_balance_by_date(fetch_start, e_date, ticker)
@@ -92,10 +104,11 @@ def fetch_all_data(ticker, s_date):
         except:
             df_short_val = pd.DataFrame(index=df_price.index); df_short_val['Short_Balance'] = 0
 
-        df_merged = df_price.join(df_inv[['Foreign_Net_Amt', 'Inst_Net_Amt']], how='left')
+        df_merged = df_price.join(df_inv, how='left')
         df_merged = df_merged.join(df_short_val, how='left')
-            
-        return df_merged.fillna(0)
+
+        return df_merged
+    
     except Exception as e:
         print(f"⚠️ 수집 에러 ({ticker}): {e}")
         return pd.DataFrame()
@@ -120,6 +133,9 @@ def calculate_indicators(df):
             
         df['GC_5_20'] = ((df['MA5'].shift(1) < df['MA20'].shift(1)) & (df['MA5'] > df['MA20'])).astype(int)
         df['DC_5_20'] = ((df['MA5'].shift(1) > df['MA20'].shift(1)) & (df['MA5'] < df['MA20'])).astype(int)
+
+        df['GC_20_60'] = ((df['MA20'].shift(1) < df['MA60'].shift(1)) & (df['MA20'] > df['MA60'])).astype(int)
+        df['DC_20_60'] = ((df['MA20'].shift(1) > df['MA60'].shift(1)) & (df['MA20'] < df['MA60'])).astype(int)
         
         df['RSI'] = ta.rsi(df['Close'], length=14)
         macd = ta.macd(df['Close'])
@@ -138,7 +154,7 @@ def calculate_indicators(df):
         df['MSCI_Event'] = df.index.strftime('%Y-%m-%d').isin(msci_dates).astype(int)
         
     except: pass
-    return df.fillna(0)
+    return df
 
 # ==========================================
 # 4. 개별 종목 처리 함수 (병렬용)
@@ -149,7 +165,9 @@ def process_single_stock(target):
     else:
         ticker, name = target[0], target[1]
 
-    required_cols = ['MA5', 'MA20', 'MA60', 'MA120', 'BB_Upper', 'BB_Lower', 'BB_Breakout', 'RSI', 'MACD', 'MACD_Sig', 'GC_5_20', 'DC_5_20', 'MSCI_Event']
+    required_cols = ['MA5', 'MA20', 'MA60', 'MA120', 'BB_Upper', 'BB_Lower', 'BB_Breakout',
+                     'RSI', 'MACD', 'MACD_Sig', 'GC_5_20', 'DC_5_20',
+                     'GC_20_60', 'DC_20_60', 'MSCI_Event']
     
     conn = _connect()
     try:
@@ -174,11 +192,11 @@ def process_single_stock(target):
                 val = (
                     date.strftime('%Y-%m-%d'), ticker, name,
                     int(row['Open']), int(row['High']), int(row['Low']), int(row['Close']), int(row['Volume']),
-                    int(row['Foreign_Net_Amt']), int(row['Inst_Net_Amt']), int(row['Short_Balance']),
+                    safe_int(row['Foreign_Net_Amt']), safe_int(row['Inst_Net_Amt']), safe_int(row['Short_Balance']),
                     float(row['MA5']), float(row['MA20']), float(row['MA60']), float(row['MA120']),
                     float(row['BB_Upper']), float(row['BB_Lower']), int(row['BB_Breakout']),
                     int(row['MSCI_Event']), float(row['RSI']), float(row['MACD']), float(row['MACD_Sig']),
-                    int(row['GC_5_20']), int(row['DC_5_20']), 0, 0
+                    int(row['GC_5_20']), int(row['DC_5_20']), int(row['GC_20_60']), int(row['DC_20_60'])
                 )
                 data_list.append(val)
 
