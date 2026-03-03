@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import time
+from pykrx import stock
 
 import os
 import pymysql
@@ -252,9 +253,29 @@ def score_news(df):
 
 def upload_news_score_to_db(df_in):
     if df_in.empty: return
+
+    # 1. 실제 거래일 리스트
+    start_str = "20230101"
+    end_str = dt.date.today().strftime("%Y%m%d")
+    # 코스피 지수 데이터를 통해 실제 장이 열렸던 날짜들만 추출
+    market_days = stock.get_market_ohlcv(start_str, end_str, "005930").index
+    market_days = pd.to_datetime(market_days)
+
+    # 2. 날짜 조정 함수: 입력일보다 크거나 같은 첫 번째 거래일을 반환
+    def get_next_trading_day(target_date):
+        target_date = pd.to_datetime(target_date)
+        # target_date보다 크거나 같은 날짜 중 가장 빠른 날
+        future_days = market_days[market_days >= target_date]
+        if not future_days.empty:
+            return future_days[0]
+        return target_date # 미래 거래일이 없으면(오늘 이후) 일단 그대로 반환
     
-    final=df_in.groupby(["company","종목코드","date"])["score"].mean().reset_index()
-    final.columns=["기업명","종목코드","날짜","점수"]
+    # 2. 뉴스 날짜를 다음 '실제 거래일'로 변환
+    df_in['date'] = pd.to_datetime(df_in['date'])
+    df_in['trade_date'] = df_in['date'].apply(get_next_trading_day)
+    
+    final = df_in.groupby(["company", "종목코드", "trade_date"])["score"].mean().reset_index()
+    final.columns = ["기업명", "종목코드", "날짜", "점수"]
     
     conn = _connect()
     try:
@@ -271,7 +292,7 @@ def upload_news_score_to_db(df_in):
         if data_list:
             cur.executemany(sql, data_list)
             conn.commit()
-            log(f"✅ DB 적재 완료: {len(data_list)}건의 데이터가 NEWS_TB에 저장되었습니다.")
+            log(f"✅ DB 적재 완료: {len(data_list)}건의 데이터 (공휴일/연휴 데이터 다음 거래일 합산)")
     except Exception as e:
         conn.rollback()
         log(f"❌ DB 적재 에러: {e}")
