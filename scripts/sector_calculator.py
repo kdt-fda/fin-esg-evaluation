@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 import FinanceDataReader as fdr
 import yfinance as yf
-import investpy
 from datetime import datetime
 from pandas.tseries.offsets import Day, DateOffset
 from dotenv import load_dotenv
