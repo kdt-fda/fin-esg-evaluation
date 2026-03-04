@@ -3,7 +3,6 @@ import requests
 import pymysql
 import numpy as np
 import pandas as pd
-import yfinance as yf
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -32,6 +31,27 @@ def _connect():
 FETCH_START_DATE = '2021-01-01'
 FINAL_START_DATE = '2023-01-01'
 LAG_MONTHS = (1, 3, 6)
+
+def fetch_kospi200_naver(start_date):
+    print(f"📡 코스피200 수집 중 (네이버 금융 직접 추출)...")
+    url = 'https://finance.naver.com/sise/sise_index_day.naver?code=KPI200&page=1'
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    
+    try:
+        response = requests.get(url, headers=headers)
+        df_list = pd.read_html(response.text)
+        df = df_list[0].dropna()
+        
+        df = df[['날짜', '체결가']]
+        df.columns = ['trade_date', 'close_kospi200']
+        
+        df['trade_date'] = pd.to_datetime(df['trade_date']).dt.normalize()
+        
+        df = df[df['trade_date'] >= pd.to_datetime(start_date)]
+        return df.sort_values('trade_date')
+    except Exception as e:
+        print(f"❌ 네이버 수집 에러: {e}")
+        return pd.DataFrame()
 
 # ============================================================
 # 2. ECOS Client (선행지수 수집)
@@ -134,26 +154,12 @@ def send_to_common_db(df):
 def run_common_indicator_calculator():
     print("🚀 공통 지표 계산 및 업데이트 중...")
     
-    end_date = datetime.now().strftime("%Y-%m-%d")
-
     try:
-        # 🎯 KRX 차단을 우회하기 위해 Yahoo Finance(^KS200) 사용
-        print(f"📡 Yahoo Finance(^KS200)로부터 데이터 수집 중...")
-        yf_data = yf.download('^KS200', start=FETCH_START_DATE, end=end_date, progress=False, auto_adjust=True)
+        df_kospi = fetch_kospi200_naver(FETCH_START_DATE)
         
-        if yf_data.empty:
+        if df_kospi.empty:
             raise ValueError("데이터가 비어 있습니다.")
 
-        # MultiIndex 해제 및 컬럼 정리
-        if isinstance(yf_data.columns, pd.MultiIndex):
-            yf_data.columns = yf_data.columns.get_level_values(0)
-            
-        df_kospi = yf_data[['Close']].reset_index()
-        df_kospi.columns = ['trade_date', 'close_kospi200']
-        
-        # 타임존 제거 및 날짜 정규화 (필수)
-        df_kospi['trade_date'] = pd.to_datetime(df_kospi['trade_date']).dt.tz_localize(None).dt.normalize()
-        
         print(f"✅ 수집 성공: 최종 날짜 {df_kospi['trade_date'].max().date()}")
 
     except Exception as e:
@@ -162,7 +168,7 @@ def run_common_indicator_calculator():
     
     client = EcosClient()
     ecos_start = pd.to_datetime(FETCH_START_DATE).strftime("%Y%m")
-    ecos_end = pd.to_datetime(end_date).strftime("%Y%m")
+    ecos_end = datetime.now().strftime("%Y%m")
     cli_raw = client.fetch_cli_data(ecos_start, ecos_end)
     
     final_df = calculate_common_indicators(df_kospi, cli_raw)
