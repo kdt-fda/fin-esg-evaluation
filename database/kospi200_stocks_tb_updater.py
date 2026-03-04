@@ -1,11 +1,21 @@
 import pymysql
 import os
+import requests
 from pykrx import stock
+from pykrx.website.comm import webio
 from datetime import datetime
 import time
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ==========================================
+# 세션 패치 (전역 설정)
+# ==========================================
+_session = requests.Session()
+
+webio.Post.read = lambda self, **params: _session.post(self.url, headers=self.headers, data=params, timeout=15)
+webio.Get.read = lambda self, **params: _session.get(self.url, headers=self.headers, params=params, timeout=15)
 
 def _connect():
     host = os.environ.get('DB_HOST')
@@ -25,7 +35,26 @@ def _connect():
 
     return conn
 
+def login_to_krx():
+    KRX_ID = os.getenv("KRX_ID")
+    KRX_PW = os.getenv("KRX_PW")
+    _LOGIN_PAGE = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001.cmd"
+    _LOGIN_URL = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001D1.cmd"
+    _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36..."
+
+    _session.get(_LOGIN_PAGE, headers={"User-Agent": _UA})
+    payload = {"mbrId": KRX_ID, "pw": KRX_PW}
+    resp = _session.post(_LOGIN_URL, data=payload, headers={"User-Agent": _UA, "Referer": _LOGIN_PAGE})
+    
+    if resp.json().get("_error_code") in ["CD001", "CD011"]:
+        return True
+    return False
+
 def update_kospi200_stocks_table():
+    if not login_to_krx():
+        print("❌ KRX 로그인 실패로 작업을 중단합니다.")
+        return
+
     # 영문 코드와 KRX 지수 코드 매핑
     sector_map = {
         'COMM': '1150', 'CONS': '1151', 'HI': '1152', 'MAT': '1153',
