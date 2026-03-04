@@ -1,45 +1,171 @@
-# prediction-web
+# Stock Prediction Dashboard
 
-React + Vite + TypeScript 기반 웹 UI 프로젝트입니다.  
-(예: 주가 예측 차트/근거 팝업/상세 모달 UI)
+주식 데이터를 기반으로 단기 및 중장기 주가 예측 결과를 시각화하는 웹 대시보드입니다.
+FastAPI 백엔드와 React 프론트엔드를 통해 예측 결과를 조회하고 차트로 확인할 수 있습니다.
 
-## 요구 사항
-- Node.js 18 이상 권장
-- npm 사용
+---
 
-## 설치 및 실행
-```bash
-# 의존성 설치
+# Project Structure
+
+```
+web/
+│
+├── backend/
+│   ├── core/
+│   ├── db/
+│   ├── routers/
+│   ├── schemas/
+│   ├── services/
+│   ├── __init__.py
+│   ├── main.py
+│   ├── requirements.txt
+│   └── database.db
+│
+├── frontend/
+│   ├── public/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── PredictionChart.tsx
+│   │   │   ├── PredictionDetailPage.tsx
+│   │   │   └── StockSidebar.tsx
+│   │   ├── styles/
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   │
+│   ├── index.html
+│   ├── package.json
+│   └── tsconfig.json
+│
+└── README.md
+```
+
+---
+
+# Tech Stack
+
+## Frontend
+
+* React
+* TypeScript
+* Vite
+* TailwindCSS
+* Recharts
+
+## Backend
+
+* FastAPI
+* Python
+* Pandas / NumPy
+
+---
+
+# Backend Setup
+
+backend 디렉토리로 이동
+
+```
+cd backend
+```
+
+가상환경 생성
+
+```
+python -m venv .venv
+```
+
+가상환경 실행 (Windows)
+
+```
+.venv\Scripts\activate
+```
+
+패키지 설치
+
+```
+pip install -r requirements.txt
+```
+
+서버 실행
+
+```
+uvicorn main:app --reload
+```
+
+API 문서
+
+```
+http://127.0.0.1:8000/docs
+```
+
+---
+
+# Frontend Setup
+
+frontend 디렉토리로 이동
+
+```
+cd frontend
+```
+
+패키지 설치
+
+```
 npm install
+```
 
-# 개발 서버 실행
+개발 서버 실행
+
+```
 npm run dev
-
 ```
 
-## 프로젝트 구조
+접속
+
 ```
-test-web/
-├─ public/                 # 정적 파일 (그대로 배포됨)
-│  └─ vite.svg
-│
-├─ src/
-│  ├─ components/          # UI 컴포넌트 모음
-│  │  ├─ PredictionChart.tsx
-│  │  ├─ PredictionDetailPage.tsx
-│  │  └─ StockSidebar.tsx
-│  │
-│  ├─ styles/              # 전역 스타일
-│  │  ├─ index.css
-│  │  ├─ tailwind.css
-│  │  └─ theme.css
-│  │
-│  ├─ App.tsx              # 전체 화면 구성 (최상위 컴포넌트)
-│  └─ main.tsx             # React 시작점 (root에 App 마운트)
-│
-├─ index.html              # 브라우저 진입점
-├─ vite.config.ts          # Vite 설정 파일
-├─ tsconfig.json           # TypeScript 기본 설정
-├─ package.json            # 프로젝트 설정 및 의존성 목록
-└─ package-lock.json       # 정확한 의존성 버전 기록
+http://localhost:5173
 ```
+
+---
+
+# API Example
+
+단기 예측 조회
+
+```
+GET /api/predictions/short?code=005930
+```
+
+Response
+
+```
+{
+  "data": [
+    {
+      "date": "2026-03-01",
+      "price": 72000
+    }
+  ],
+  "confidence": 0.82
+}
+```
+
+---
+
+# Roadmap
+
+Backend
+
+* 주가 데이터 수집 자동화
+* 예측 모델 학습 파이프라인 구축
+* MySQL 데이터베이스 연동
+
+Frontend
+
+* 종목 검색 기능 개선
+* 차트 UI 개선
+* 로딩 및 에러 처리 개선
+
+DevOps
+
+* Docker 환경 구성
+* CI/CD 파이프라인 구축
