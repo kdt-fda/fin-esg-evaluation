@@ -1,25 +1,29 @@
-# 1. 일반 패키지들
-setuptools<70.0.0
-setuptools-scm
-wheel
+# 1. 빌드 및 유틸리티
+setuptools==69.5.1
+wheel==0.46.3
+python-dotenv==1.2.1
+schedule==1.2.2
 
-python-dotenv
-schedule
-
-pandas
-numpy
-pandas_ta
-
+# 2. 데이터 수집 및 DB
 pymysql
-
-requests
-beautifulsoup4
-lxml
+requests==2.32.5
+requests-file==3.0.1
+requests-toolbelt==1.0.0
+beautifulsoup4==4.14.3
+lxml==6.0.2
 finance-datareader==0.9.102
-yfinance
-pykrx
+yfinance==1.1.0
+pykrx==1.2.4
 
-# 2. PyTorch 관련
+# 3. 데이터 분석
+pandas==2.3.3
+numpy==1.26.4
+pandas-ta==0.4.71b0
+pandas-datareader==0.10.0
+pandas_market_calendars==5.3.0
+
+# 4. AI 관련
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch
-transformers
+torch==2.10.0
+transformers==5.2.0
+pytorch-tabnet==4.1.0
