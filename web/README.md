@@ -17,9 +17,8 @@ web/
 │   ├── schemas/
 │   ├── services/
 │   ├── __init__.py
-│   ├── main.py
-│   ├── requirements.txt
-│   └── database.db
+│   ├── main.py 
+│   └── requirements.txt
 │
 ├── frontend/
 │   ├── public/
