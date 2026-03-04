@@ -1,0 +1,70 @@
+############################
+# FRONTEND (React / Vite)
+############################
+
+frontend/node_modules
+frontend/dist
+frontend/dist-ssr
+frontend/.vite
+frontend/coverage
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+############################
+# BACKEND (FastAPI / Python)
+############################
+
+# Python generated files
+backend/__pycache__/
+backend/*.py[oc]
+backend/build/
+backend/dist/
+backend/wheels/
+backend/*.egg-info
+
+# Virtual environments
+backend/.venv
+backend/venv
+backend/env
+
+# Python cache
+backend/.pytest_cache
+backend/.mypy_cache
+
+############################
+# ENV FILES
+############################
+
+.env
+.env.*
+*.local
+!.env.example
+
+############################
+# EDITOR / IDE
+############################
+
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+############################
+# OS FILES
+############################
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+############################
+# JUPYTER
+############################
+
+.ipynb_checkpoints
