@@ -145,7 +145,7 @@ def send_to_common_db(df):
         data = [tuple(row) for row in df.values]
         cur.executemany(sql, data)
         conn.commit()
-        print(f"✅ COMMON_TB 업데이트 완료: {len(df)}건")
+        print(f"✅ COMMON_TB 업데이트 완료")
     except Exception as e:
         print(f"❌ DB 적재 오류: {e}")
         conn.rollback()
