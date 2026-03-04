@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import FinanceDataReader as fdr
 import yfinance as yf
+import investpy
 from datetime import datetime
 from pandas.tseries.offsets import Day, DateOffset
 from dotenv import load_dotenv
@@ -44,6 +45,17 @@ def get_tickers_by_sector(sector_code):
             sql = "SELECT ticker, stock_name FROM KOSPI200_STOCKS_TB WHERE sector_code = %s AND is_active = TRUE"
             cur.execute(sql, (sector_code,))
             return cur.fetchall()
+    finally:
+        conn.close()
+
+def get_kospi200_from_db():
+    print("📡 COMMON_TB에서 코스피 200 데이터 조회 중...")
+    conn = _connect()
+    try:
+        sql = "SELECT trade_date as Date, close_kospi200 as KOSPI200_Close FROM COMMON_TB ORDER BY trade_date ASC"
+        df = pd.read_sql(sql, conn)
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
+        return df
     finally:
         conn.close()
 
@@ -819,9 +831,8 @@ def process_healthcare():
     ticker_list = [s['ticker'] for s in stocks]
 
     # 2. 외부 공통 지표 수집 (코스피 200, 헬스케어 ETF)
-    # TIGER 200 헬스케어(227540)
     print("📡 시장 지수 및 헬스케어 ETF 데이터 수집 중...")
-    kospi200 = safe_fetch_yf('^KS200', FETCH_START_DATE, END_DATE, 'KOSPI200_Close')
+    kospi200 = get_kospi200_from_db()
     tiger_hc = safe_fetch_fdr('227540', FETCH_START_DATE, END_DATE, 'ETF_Close')
     
     # 3. DB에서 재무 데이터 수집 (FUNDAMENTAL_TB)
@@ -1074,7 +1085,7 @@ def process_industrials():
 
     # 시장 지수 및 섹터 ETF (TIGER 200 산업재: 227550)
     print("📡 KOSPI 200 및 산업재 ETF 데이터 수집 중...")
-    kospi200 = safe_fetch_yf('^KS200', FETCH_START_DATE, END_DATE, 'KOSPI200_Close')
+    kospi200 = get_kospi200_from_db()
     tiger_ig = safe_fetch_fdr('227550', FETCH_START_DATE, END_DATE, 'ETF_Close')
 
     all_results = []
@@ -1105,8 +1116,8 @@ def process_industrials():
         
         # (1) 상대적 변동성 비율 (Vol Ratio) - 20일 기준
         k_ret = m['KOSPI200_Close'].pct_change()
-        v_stock = s_ret.rolling(20, min_periods=15).std()
-        v_market = k_ret.rolling(20, min_periods=15).std()
+        v_stock = s_ret.rolling(20).std()
+        v_market = k_ret.rolling(20).std()
         m['vol_ratio'] = v_stock / (v_market + 1e-10)
         
         # (2) 물류 수요 모멘텀 (3개월 시계열 기준)
