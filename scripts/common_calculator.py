@@ -4,14 +4,24 @@ import requests
 import pymysql
 import numpy as np
 import pandas as pd
+from pykrx import stock
+from pykrx.website.comm import webio
 from datetime import datetime
 from dotenv import load_dotenv
+
+load_dotenv()
+
+# ==========================================
+# 세션 패치 (전역 설정)
+# ==========================================
+_session = requests.Session()
+
+webio.Post.read = lambda self, **params: _session.post(self.url, headers=self.headers, data=params, timeout=15)
+webio.Get.read = lambda self, **params: _session.get(self.url, headers=self.headers, params=params, timeout=15)
 
 # ============================================================
 # 1. 설정 및 초기화
 # ============================================================
-load_dotenv()
-
 def _connect():
     host = os.environ.get('DB_HOST')
     port = int(os.environ.get('DB_PORT'))
@@ -29,30 +39,24 @@ def _connect():
 
     return conn
 
+def login_to_krx():
+    KRX_ID = os.getenv("KRX_ID")
+    KRX_PW = os.getenv("KRX_PW")
+    _LOGIN_PAGE = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001.cmd"
+    _LOGIN_URL = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001D1.cmd"
+    _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36..."
+
+    _session.get(_LOGIN_PAGE, headers={"User-Agent": _UA})
+    payload = {"mbrId": KRX_ID, "pw": KRX_PW}
+    resp = _session.post(_LOGIN_URL, data=payload, headers={"User-Agent": _UA, "Referer": _LOGIN_PAGE})
+    
+    if resp.json().get("_error_code") in ["CD001", "CD011"]:
+        return True
+    return False
+
 FETCH_START_DATE = '2021-01-01'
 FINAL_START_DATE = '2023-01-01'
 LAG_MONTHS = (1, 3, 6)
-
-def fetch_kospi200_naver(start_date):
-    print(f"📡 코스피200 수집 중 (네이버 금융 직접 추출)...")
-    url = 'https://finance.naver.com/sise/sise_index_day.naver?code=KPI200&page=1'
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-    
-    try:
-        response = requests.get(url, headers=headers)
-        df_list = pd.read_html(io.StringIO(response.text))
-        df = df_list[0].dropna()
-        
-        df = df[['날짜', '체결가']]
-        df.columns = ['trade_date', 'close_kospi200']
-        
-        df['trade_date'] = pd.to_datetime(df['trade_date']).dt.normalize()
-        
-        df = df[df['trade_date'] >= pd.to_datetime(start_date)]
-        return df.sort_values('trade_date')
-    except Exception as e:
-        print(f"❌ 네이버 수집 에러: {e}")
-        return pd.DataFrame()
 
 # ============================================================
 # 2. ECOS Client (선행지수 수집)
@@ -154,14 +158,26 @@ def send_to_common_db(df):
 
 def run_common_indicator_calculator():
     print("🚀 공통 지표 계산 및 업데이트 중...")
+
+    if not login_to_krx():
+        print("❌ KRX 로그인 실패로 공통 지표 수집을 중단합니다.")
+        return
+    
+    s_date = pd.to_datetime(FETCH_START_DATE).strftime("%Y%m%d")
+    e_date = datetime.now().strftime("%Y%m%d")
     
     try:
-        df_kospi = fetch_kospi200_naver(FETCH_START_DATE)
+        df_kospi = stock.get_index_ohlcv_by_date(s_date, e_date, "1028")
         
         if df_kospi.empty:
             raise ValueError("데이터가 비어 있습니다.")
+        
+        df_kospi = df_kospi[['종가']].reset_index()
+        df_kospi.columns = ['trade_date', 'close_kospi200']
 
-        print(f"✅ 수집 성공: 최종 날짜 {df_kospi['trade_date'].max().date()}")
+        df_kospi['trade_date'] = pd.to_datetime(df_kospi['trade_date']).dt.normalize()
+
+        print(f"✅ KRX 지수 수집 성공: 최종 날짜 {df_kospi['trade_date'].max().date()}")
 
     except Exception as e:
         print(f"❌ KOSPI 200 수집 최종 실패: {e}")
@@ -171,6 +187,9 @@ def run_common_indicator_calculator():
     ecos_start = pd.to_datetime(FETCH_START_DATE).strftime("%Y%m")
     ecos_end = datetime.now().strftime("%Y%m")
     cli_raw = client.fetch_cli_data(ecos_start, ecos_end)
+
+    if cli_raw.empty:
+        print("⚠️ ECOS CLI 데이터가 비어 있습니다.")
     
     final_df = calculate_common_indicators(df_kospi, cli_raw)
     send_to_common_db(final_df)
