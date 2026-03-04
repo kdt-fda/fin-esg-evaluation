@@ -62,10 +62,10 @@ def get_last_update_date(ticker, cur):
 
     # 결과가 딕셔너리 형태일 때 (이름으로 접근)
     if isinstance(result, dict) and result.get('last_date'):
-        return (result['last_date'] + timedelta(days=1)).strftime("%Y%m%d")
+        return result['last_date'].strftime("%Y%m%d")
     # 결과가 튜플 형태일 때 (인덱스로 접근)
     elif isinstance(result, (tuple, list)) and result[0]:
-        return (result[0] + timedelta(days=1)).strftime("%Y%m%d")
+        return result[0].strftime("%Y%m%d")
     
     return "20220601"
 
@@ -209,8 +209,15 @@ def process_single_stock(target):
                                     golden_cross_20_60, death_cross_20_60)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE 
+                    open=VALUES(open), high=VALUES(high), low=VALUES(low),
                     close=VALUES(close), volume=VALUES(volume), short_balance=VALUES(short_balance),
-                    foreign_net_amt=VALUES(foreign_net_amt), inst_net_amt=VALUES(inst_net_amt);
+                    foreign_net_amt=VALUES(foreign_net_amt), inst_net_amt=VALUES(inst_net_amt),
+                    ma5=VALUES(ma5), ma20=VALUES(ma20), ma60=VALUES(ma60), ma120=VALUES(ma120),
+                    bb_upper=VALUES(bb_upper), bb_lower=VALUES(bb_lower), bb_breakout=VALUES(bb_breakout),
+                    rsi=VALUES(rsi), macd=VALUES(macd), macd_signal=VALUES(macd_signal),
+                    msci_event=VALUES(msci_event), golden_cross_5_20=VALUES(golden_cross_5_20),
+                    death_cross_5_20=VALUES(death_cross_5_20), golden_cross_20_60=VALUES(golden_cross_20_60),
+                    death_cross_20_60=VALUES(death_cross_20_60);
             """
             cur.executemany(sql, data_list)
             conn.commit()
