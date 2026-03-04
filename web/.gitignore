@@ -2,14 +2,14 @@
 # FRONTEND (React / Vite)
 ############################
 
-frontend/node_modules
-frontend/dist
-frontend/dist-ssr
-frontend/.vite
-frontend/coverage
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+frontend/coverage/
 
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -23,20 +23,24 @@ lerna-debug.log*
 
 # Python generated files
 backend/__pycache__/
-backend/*.py[oc]
+backend/*.py[cod]
 backend/build/
 backend/dist/
 backend/wheels/
-backend/*.egg-info
+backend/*.egg-info/
 
 # Virtual environments
-backend/.venv
-backend/venv
-backend/env
+backend/.venv/
+backend/venv/
+backend/env/
 
 # Python cache
-backend/.pytest_cache
-backend/.mypy_cache
+backend/.pytest_cache/
+backend/.mypy_cache/
+
+# Database
+backend/*.db
+*.db
 
 ############################
 # ENV FILES
@@ -53,7 +57,7 @@ backend/.mypy_cache
 
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
 
 ############################
 # OS FILES
@@ -67,4 +71,4 @@ desktop.ini
 # JUPYTER
 ############################
 
-.ipynb_checkpoints
+.ipynb_checkpoints/
