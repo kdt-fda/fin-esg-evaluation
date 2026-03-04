@@ -1,4 +1,5 @@
 import os
+import io
 import requests
 import pymysql
 import numpy as np
@@ -39,7 +40,7 @@ def fetch_kospi200_naver(start_date):
     
     try:
         response = requests.get(url, headers=headers)
-        df_list = pd.read_html(response.text)
+        df_list = pd.read_html(io.StringIO(response.text))
         df = df_list[0].dropna()
         
         df = df[['날짜', '체결가']]
