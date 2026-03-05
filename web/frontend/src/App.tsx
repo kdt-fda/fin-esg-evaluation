@@ -229,6 +229,9 @@ export default function App() {
               <Clock size={14} />
               <span>업데이트까지 {timeUntilUpdate} 남았습니다.</span>
             </div>
+            <div className="absolute right-4 bottom-3 text-sm text-gray-400">
+              © Team MER-M
+            </div>
           </div>
         </footer>
       </div>
