@@ -766,9 +766,19 @@ def process_finance():
         return
 
     # 2. 외부 공통 지표 수집 (금리, VIX, XLF, 산업 ETF)
-    # TIGER 200 금융(139270)
     print("📡 금리, VIX, 글로벌 금융(XLF) 데이터 수집 중...")
-    kr10y = safe_fetch_fdr('INVESTING:KR10YT=RR', FETCH_START_DATE, END_DATE, 'KR10Y')
+    conn = _connect()
+    try:
+        print("DB에서 국고채 금리(KTB10Y) 데이터 로드 중...")
+        macro_query = "SELECT trade_date as Date, ktb10y as KR10Y FROM MACROECONOMICS_TB"
+        kr10y = pd.read_sql(macro_query, conn)
+        kr10y['Date'] = pd.to_datetime(kr10y['Date']).dt.normalize()
+    except Exception as e:
+        print(f'DB 지표 수집 실패: {e}')
+        return
+    finally:
+        conn.close()
+
     xlf = safe_fetch_yf('XLF', FETCH_START_DATE, END_DATE, 'XLF_Close')
     vix = safe_fetch_yf('^VIX', FETCH_START_DATE, END_DATE, 'VIX_Close')
     tiger_fin = safe_fetch_fdr('139270', FETCH_START_DATE, END_DATE, 'ETF_Close')
@@ -795,9 +805,13 @@ def process_finance():
         
         # 외부 지표 병합
         m = pd.merge(df, tiger_fin, on='Date', how='left')
-        m = pd.merge(m, kr10y, on='Date', how='left')
-        m = pd.merge(m, vix, on='Date', how='left')
-        m = pd.merge(m, xlf, on='Date', how='left')
+        
+        # Asof 병합 (금리, VIX, XLF)
+        m = m.sort_values('Date')
+        for extra_df in [kr10y, vix, xlf]:
+            if not extra_df.empty:
+                extra_df['Date'] = pd.to_datetime(extra_df['Date']).dt.normalize()
+                m = pd.merge_asof(m, extra_df.sort_values('Date'), on='Date', direction='backward')
         
         # 결측치 보정 (금융 데이터는 연속성이 중요하므로 ffill)
         m = m.sort_values('Date').ffill().bfill()
