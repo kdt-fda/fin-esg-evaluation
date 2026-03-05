@@ -187,14 +187,22 @@ export default function App() {
             </h1>
           </div>
 
-          <div className="text-center">
-            <p className="text-sm text-gray-600">
-              현재 종목:{' '}
-              <span className="font-semibold text-blue-600">
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-sm text-gray-500">현재 종목:</span>
+
+            <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-400 to-blue-500 text-white rounded-full shadow-md">
+              <span className="font-semibold">
                 {selectedStock?.name ?? '-'}
-              </span>{' '}
-              ({selectedStock?.code ?? '-'})
-            </p>
+              </span>
+
+              <span className="text-xs opacity-90 bg-white/20 px-2 py-0.5 rounded-full">
+                {selectedStock?.code ?? '-'}
+              </span>
+
+              <span className="text-xs opacity-75 border-l border-white/30 pl-2">
+                {selectedStock?.sector ?? '-'}
+              </span>
+            </div>
           </div>
         </header>
 

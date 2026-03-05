@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, RotateCcw } from 'lucide-react';
+import { Search, RotateCcw, Star } from 'lucide-react';
 
 export interface Stock {
   code: string;
@@ -23,6 +23,20 @@ export default function StockSidebar({ selectedStock, onSelectStock }: StockSide
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const listRef = useRef<HTMLDivElement | null>(null);
+
+  // 즐겨찾기 state
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+
+  const toggleFavorite = (code: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setFavorites((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  };
 
   // DB에서 코스피200 종목 로드
   useEffect(() => {
@@ -60,21 +74,33 @@ export default function StockSidebar({ selectedStock, onSelectStock }: StockSide
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 검색 필터
+  // 검색 + 즐겨찾기 필터
   const filteredStocks = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-    if (!q) return stocks;
 
-    return stocks.filter((stock) => stock.name.toLowerCase().includes(q) || stock.code.includes(q));
-  }, [stocks, searchTerm]);
+    let result = stocks;
+
+    if (q) {
+      result = result.filter(
+        (stock) => stock.name.toLowerCase().includes(q) || stock.code.includes(q)
+      );
+    }
+
+    if (showFavoritesOnly) {
+      result = result.filter((stock) => favorites.has(stock.code));
+    }
+
+    return result;
+  }, [stocks, searchTerm, showFavoritesOnly, favorites]);
 
   const showReset =
     !!searchTerm.trim() || (stocks.length > 0 && selectedStock?.code !== stocks[0]?.code);
 
   const handleReset = () => {
     setSearchTerm('');
-    if (stocks.length > 0) onSelectStock(stocks[0]); // 선택 종목 초기화
-    listRef.current?.scrollTo({ top: 0, behavior: 'smooth' }); // (선택) 스크롤 맨 위
+    setShowFavoritesOnly(false); // 필터도 초기화
+    if (stocks.length > 0) onSelectStock(stocks[0]);
+    listRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
@@ -96,6 +122,34 @@ export default function StockSidebar({ selectedStock, onSelectStock }: StockSide
           )}
         </div>
 
+        {/* 즐겨찾기 필터 */}
+        <div className="flex gap-2 mb-3">
+          <button
+            onClick={() => setShowFavoritesOnly(false)}
+            className={`flex-1 px-3 py-1.5 rounded-md text-sm transition-colors ${
+              !showFavoritesOnly
+                ? 'bg-blue-500 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+            type="button"
+          >
+            전체
+          </button>
+
+          <button
+            onClick={() => setShowFavoritesOnly(true)}
+            className={`flex-1 px-3 py-1.5 rounded-md text-sm flex items-center justify-center gap-1 transition-colors ${
+              showFavoritesOnly
+                ? 'bg-blue-500 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+            type="button"
+          >
+            <Star size={14} fill={showFavoritesOnly ? 'white' : 'none'} />
+            즐겨찾기 ({favorites.size})
+          </button>
+        </div>
+
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
           <input
@@ -112,25 +166,46 @@ export default function StockSidebar({ selectedStock, onSelectStock }: StockSide
       </div>
 
       <div ref={listRef} className="flex-1 overflow-y-auto">
-        {filteredStocks.map((stock) => (
-          <button
-            key={stock.code}
-            onClick={() => onSelectStock(stock)}
-            className={`w-full px-6 py-4 text-left hover:bg-gray-50 transition-colors border-b border-gray-100 ${
-              selectedStock?.code === stock.code ? 'bg-blue-50 border-l-4 border-l-blue-500' : ''
-            }`}
-          >
-            <div className="flex justify-between items-start">
-              <div>
-                <div className="font-medium text-gray-900">{stock.name}</div>
-                <div className="text-sm text-gray-500">{stock.code}</div>
-              </div>
-              <div className="text-xs text-gray-400 mt-1">{stock.sector}</div>
-            </div>
-          </button>
-        ))}
+        {filteredStocks.length === 0 ? (
+          <div className="text-center py-8 text-gray-400 text-sm">
+            {showFavoritesOnly ? '즐겨찾기한 기업이 없습니다' : '검색 결과가 없습니다'}
+          </div>
+        ) : (
+          filteredStocks.map((stock) => (
+            <div
+              key={stock.code}
+              className={`w-full flex items-start gap-2 px-4 py-4 hover:bg-gray-50 transition-colors border-b border-gray-100 ${
+                selectedStock?.code === stock.code ? 'bg-blue-50 border-l-4 border-l-blue-500' : ''
+              }`}
+            >
+              {/* 즐겨찾기 별 */}
+              <button
+                onClick={(e) => toggleFavorite(stock.code, e)}
+                className="mt-0.5 hover:scale-110 transition-transform"
+                title={favorites.has(stock.code) ? '즐겨찾기 해제' : '즐겨찾기 추가'}
+                type="button"
+              >
+                <Star
+                  size={18}
+                  className={favorites.has(stock.code) ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}
+                />
+              </button>
 
-        {!loading && !errorMsg && filteredStocks.length === 0 && (
+              {/* 기업 정보 클릭 영역 */}
+              <button onClick={() => onSelectStock(stock)} className="flex-1 text-left" type="button">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div className="font-medium text-gray-900">{stock.name}</div>
+                    <div className="text-sm text-gray-500">{stock.code}</div>
+                  </div>
+                  <div className="text-xs text-gray-400 mt-1">{stock.sector}</div>
+                </div>
+              </button>
+            </div>
+          ))
+        )}
+
+        {!loading && !errorMsg && stocks.length > 0 && filteredStocks.length === 0 && (
           <div className="p-6 text-sm text-gray-500">검색 결과가 없습니다.</div>
         )}
       </div>
