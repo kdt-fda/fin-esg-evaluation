@@ -538,8 +538,18 @@ def process_construction():
 
     # 환율, 국채 금리, 섹터 ETF (TIGER 200 건설: 139220)
     print("📡 환율, 금리 및 건설 ETF 데이터 수집 중...")
-    usd_krw = safe_fetch_yf('USDKRW=X', FETCH_START_DATE, END_DATE, 'USD_KRW')
-    kr10yt = safe_fetch_fdr('INVESTING:KR10YT=RR', FETCH_START_DATE, END_DATE, 'KR10Y')
+    conn = _connect()
+    try:
+        print("DB에서 금리 및 환율 데이터 로드 중...")
+        macro_query = "SELECT trade_date as Date, ktb10y as KR10Y, usdkrw as USD_KRW FROM MACROECONOMICS_TB"
+        db_macro = pd.read_sql(macro_query, conn)
+        db_macro['Date'] = pd.to_datetime(db_macro['Date']).dt.normalize()
+    except Exception as e:
+        print(f"DB 지표 수집 실패: {e}")
+        return
+    finally:
+        conn.close()
+    
     tiger_cons = safe_fetch_fdr('139220', FETCH_START_DATE, END_DATE, 'ETF_Close')
 
     all_results = []
@@ -558,9 +568,9 @@ def process_construction():
         # 기본 병합
         m = pd.merge(df, tiger_cons, on='Date', how='left')
         
-        # Asof 병합 (환율, 금리, 매크로)
+        # Asof 병합 (DB 매크로[금리, 환율] + ECOS 매크로)
         m = m.sort_values('Date')
-        for extra_df in [usd_krw, kr10yt, macro_df]:
+        for extra_df in [db_macro, macro_df]:
             if not extra_df.empty:
                 extra_df['Date'] = pd.to_datetime(extra_df['Date']).dt.normalize()
                 m = pd.merge_asof(m, extra_df.sort_values('Date'), on='Date', direction='backward')
@@ -1000,8 +1010,18 @@ def process_heavy_industry():
 
     # 환율, WTI 유가, 섹터 ETF (KODEX 기계장비: 102960)
     print("📡 환율, 유가 및 중공업(기계) ETF 데이터 수집 중...")
-    usd_krw = safe_fetch_yf('USDKRW=X', FETCH_START_DATE, END_DATE, 'USD_KRW')
-    wti = safe_fetch_yf('CL=F', FETCH_START_DATE, END_DATE, 'WTI_Close')
+    conn = _connect()
+    try:
+        print("DB에서 환율 및 유가 데이터 로드 중...")
+        macro_query = "SELECT trade_date as Date, usdkrw as USD_KRW, wti as WTI_Close FROM MACROECONOMICS_TB"
+        db_macro = pd.read_sql(macro_query, conn)
+        db_macro['Date'] = pd.to_datetime(db_macro['Date']).dt.normalize()
+    except Exception as e:
+        print(f'DB 지표 수집 실패: {e}')
+        return
+    finally:
+        conn.close()
+
     mach_etf = safe_fetch_fdr('102960', FETCH_START_DATE, END_DATE, 'ETF_Close')
 
     all_results = []
@@ -1020,11 +1040,11 @@ def process_heavy_industry():
         # 기본 병합
         m = pd.merge(df, mach_etf, on='Date', how='left')
         
-        # Asof 병합 (환율, 유가, 제조업 지수)
+        # Asof 병합 (DB 매크로[환율, 유가] + ECOS 제조업 지수)
         m = m.sort_values('Date')
-        for extra_df in [usd_krw, wti, macro_df]:
+        for extra_df in [db_macro, macro_df]:
             if not extra_df.empty:
-                extra_df['Date'] = pd.to_datetime(extra_df['Date'])
+                extra_df['Date'] = pd.to_datetime(extra_df['Date']).dt.normalize()
                 m = pd.merge_asof(m, extra_df.sort_values('Date'), on='Date', 
                                   direction='backward', tolerance=pd.Timedelta('2D'))
 
@@ -1372,8 +1392,19 @@ def process_materials():
 
     # 원자재 및 글로벌 지표 (구리, WTI, 중국 ETF-FXI, 철강 ETF-117680)
     print("📡 원자재(구리/WTI) 및 중국/철강 ETF 데이터 수집 중...")
+    conn = _connect()
+    try:
+        print("DB에서 유가 데이터 로드 중...")
+        macro_query = "SELECT trade_date as Date, wti as WTI_Close FROM MACROECONOMICS_TB"
+        db_macro = pd.read_sql(macro_query, conn)
+        db_macro['Date'] = pd.to_datetime(db_macro['Date']).dt.normalize()
+    except Exception as e:
+        print(f'DB 지표 수집 실패: {e}')
+        return
+    finally:
+        conn.close()
+
     copper = safe_fetch_yf('HG=F', FETCH_START_DATE, END_DATE, 'Copper_Close')
-    wti = safe_fetch_yf('CL=F', FETCH_START_DATE, END_DATE, 'WTI_Close')
     fxi = safe_fetch_yf('FXI', FETCH_START_DATE, END_DATE, 'FXI_Close')
     steel_etf = safe_fetch_fdr('117680', FETCH_START_DATE, END_DATE, 'ETF_Close')
 
@@ -1393,11 +1424,11 @@ def process_materials():
         # 기본 병합
         m = pd.merge(df, steel_etf, on='Date', how='left')
         
-        # Asof 병합
+        # Asof 병합 (구리, 중국ETF, DB_WTI, 매크로_ECOS)
         m = m.sort_values('Date')
-        for extra_df in [copper, wti, fxi, macro_df]:
+        for extra_df in [copper, fxi, db_macro, macro_df]:
             if not extra_df.empty:
-                extra_df['Date'] = pd.to_datetime(extra_df['Date'])
+                extra_df['Date'] = pd.to_datetime(extra_df['Date']).dt.normalize()
                 m = pd.merge_asof(m, extra_df.sort_values('Date'), on='Date', 
                                   direction='backward', tolerance=pd.Timedelta('2D'))
 
