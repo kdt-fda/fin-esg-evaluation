@@ -177,7 +177,7 @@ def run_common_indicator_calculator():
 
         df_kospi['trade_date'] = pd.to_datetime(df_kospi['trade_date']).dt.normalize()
 
-        print(f"✅ KRX 지수 수집 성공: 최종 날짜 {df_kospi['trade_date'].max().date()}")
+        print(f"✅ 코스피200 지수 수집 성공: 최종 날짜 {df_kospi['trade_date'].max().date()}")
 
     except Exception as e:
         print(f"❌ KOSPI 200 수집 최종 실패: {e}")
