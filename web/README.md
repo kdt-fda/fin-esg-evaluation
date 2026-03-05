@@ -1,7 +1,9 @@
 # Stock Prediction Dashboard
 
-주식 데이터를 기반으로 단기 및 중장기 주가 예측 결과를 시각화하는 웹 대시보드입니다.
+주식 데이터를 기반으로 단기 및 중장기 주가 예측 결과를 시각화하는 웹 대시보드입니다.  
 FastAPI 백엔드와 React 프론트엔드를 통해 예측 결과를 조회하고 차트로 확인할 수 있습니다.
+
+Docker를 통해 Frontend + Backend를 한 번에 실행할 수 있습니다.
 
 ---
 
@@ -17,8 +19,10 @@ web/
 │   ├── schemas/
 │   ├── services/
 │   ├── __init__.py
-│   ├── main.py 
-│   └── requirements.txt
+│   ├── main.py
+│   ├── requirements.txt
+│   ├── Dockerfile.backend
+│   └── .dockerignore
 │
 ├── frontend/
 │   ├── public/
@@ -33,8 +37,11 @@ web/
 │   │
 │   ├── index.html
 │   ├── package.json
-│   └── tsconfig.json
+│   ├── vite.config.ts
+│   ├── Dockerfile.frontend
+│   └── .dockerignore
 │
+├── docker-compose.yml
 └── README.md
 ```
 
@@ -44,17 +51,62 @@ web/
 
 ## Frontend
 
-* React
-* TypeScript
-* Vite
-* TailwindCSS
-* Recharts
+- React  
+- TypeScript  
+- Vite  
+- TailwindCSS  
+- Recharts  
 
 ## Backend
 
-* FastAPI
-* Python
-* Pandas / NumPy
+- FastAPI  
+- Python  
+- SQLAlchemy  
+- Pandas / NumPy  
+
+## DevOps
+
+- Docker  
+- Docker Compose  
+
+---
+
+# Running the Project (Recommended: Docker)
+
+Docker를 사용하면 Frontend + Backend를 한 번에 실행할 수 있습니다.
+
+## Docker Desktop 실행
+
+Docker Desktop이 실행 중인지 확인합니다.
+
+## 프로젝트 루트에서 실행
+
+```
+docker compose up --build
+```
+
+## 접속
+
+### Frontend
+```
+http://localhost:5173
+```
+
+### Backend API
+```
+http://localhost:8000
+```
+
+### Swagger API Docs
+```
+http://localhost:8000/docs
+```
+
+---
+
+# Running Without Docker (Optional)
+
+Docker 없이 로컬에서 직접 실행하는 방법입니다.
 
 ---
 
@@ -123,48 +175,3 @@ npm run dev
 ```
 http://localhost:5173
 ```
-
----
-
-# API Example
-
-단기 예측 조회
-
-```
-GET /api/predictions/short?code=005930
-```
-
-Response
-
-```
-{
-  "data": [
-    {
-      "date": "2026-03-01",
-      "price": 72000
-    }
-  ],
-  "confidence": 0.82
-}
-```
-
----
-
-# Roadmap
-
-Backend
-
-* 주가 데이터 수집 자동화
-* 예측 모델 학습 파이프라인 구축
-* MySQL 데이터베이스 연동
-
-Frontend
-
-* 종목 검색 기능 개선
-* 차트 UI 개선
-* 로딩 및 에러 처리 개선
-
-DevOps
-
-* Docker 환경 구성
-* CI/CD 파이프라인 구축
