@@ -72,3 +72,32 @@ desktop.ini
 ############################
 
 .ipynb_checkpoints/
+
+############################
+# DOCKER
+############################
+
+# Docker build cache
+*.pid
+*.seed
+*.pid.lock
+
+# Docker local volumes
+docker-data/
+mysql-data/
+
+############################
+# TEST / CACHE
+############################
+
+.coverage
+htmlcov/
+.pytest_cache/
+
+############################
+# TEMP FILES
+############################
+
+*.tmp
+*.temp
+*.swp
