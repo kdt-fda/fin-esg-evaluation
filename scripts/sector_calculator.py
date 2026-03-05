@@ -1198,12 +1198,13 @@ def process_industrials():
         m[fill_cols] = m[fill_cols].ffill().bfill()
 
         # (1) 상대적 변동성 (20일)
-        s_ret = m['Close'].pct_change()
-        k_ret = m['KOSPI200_Close'].pct_change()
+        s_std = m['Close'].pct_change()
+        k_std = m['KOSPI200_Close'].pct_change()
         
-        # ✨ [핵심 수정] vol_ratio 안정화
-        m['vol_ratio'] = s_ret.rolling(20).std() / (k_ret.rolling(20).std() + 1e-10)
-        m['vol_ratio'] = m['vol_ratio'].round(4)
+        vol_raw = s_std / (k_std + 1e-10)
+
+        m['vol_ratio'] = np.where((vol_raw <= 999999) & np.isfinite(vol_raw), vol_raw, np.nan)
+        m['vol_ratio'] = m['vol_ratio']
         
         # (2) 물류 수요 모멘텀 (3개월 시계열 기준)
         m['logistics_momentum'] = m['sea_bsi'].pct_change(60)
@@ -1226,9 +1227,24 @@ def process_industrials():
     # 4. DB 적재
     if all_results:
         final_df = pd.concat(all_results).replace({np.nan: None})
+        final_df = final_df.where(pd.notnull(final_df), None)
         conn = _connect()
         try:
             cur = conn.cursor()
+
+            data = []
+            for _, row in final_df.iterrows():
+                v_ratio = row['vol_ratio']
+                if v_ratio is None or not np.isfinite(float(v_ratio or 0)) or float(v_ratio) > 999999:
+                    v_ratio = None
+                else:
+                    v_ratio = float(v_ratio)
+
+            data.append((
+                row['Date'], row['ticker'], v_ratio, row['logistics_momentum'],
+                row['ship_vol_lag3'], row['mfg_lag3'], row['mfg_lag6'], row['z_score']
+            ))
+            
             sql = """
                 INSERT INTO INDUSTRIALS_TB (
                     trade_date, ticker, vol_ratio, logistics_momentum, 
@@ -1240,11 +1256,6 @@ def process_industrials():
                     ship_vol_lag3=VALUES(ship_vol_lag3), mfg_lag3=VALUES(mfg_lag3),
                     mfg_lag6=VALUES(mfg_lag6), z_score=VALUES(z_score);
             """
-            data = [
-                (row['Date'], row['ticker'], row['vol_ratio'], row['logistics_momentum'], 
-                 row['ship_vol_lag3'], row['mfg_lag3'], row['mfg_lag6'], row['z_score']) 
-                for _, row in final_df.iterrows()
-            ]
             cur.executemany(sql, data)
             conn.commit()
             print(f"✅ INDUSTRIALS_TB 업데이트 완료: {len(final_df)}건")
