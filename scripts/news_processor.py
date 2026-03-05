@@ -116,23 +116,29 @@ def load_company_mapping_from_db():
     try:
         # DictCursor를 사용하여 컬럼명으로 접근
         with conn.cursor(pymysql.cursors.DictCursor) as cur:
-            # 1. 종목 매핑 정보 조회
+            # 종목 매핑 정보 조회
             cur.execute("SELECT ticker, stock_name FROM KOSPI200_STOCKS_TB WHERE is_active = TRUE")
             rows = cur.fetchall()
             mapping = {norm_name(r['stock_name']): r['ticker'] for r in rows}
             companies = [r['stock_name'] for r in rows]
 
-            # 2. 마지막 수집 날짜 확인 (누락 기간 자동 계산용)
+            # 마지막 수집 날짜 확인
             cur.execute("SELECT MAX(trade_date) as last_date FROM NEWS_TB")
             last_date = cur.fetchone()['last_date']
+            today = dt.date.today()
 
-            # 3. 안전 마진 적용: 마지막 날짜로부터 1일 전부터 수집 시작
-            # 중복 데이터는 업데이트만
-            start_date = last_date - dt.timedelta(days=1)
-            end_date = dt.date.today()
+            # 마지막 수집일이 어제거나 오늘인 경우
+            if last_date >= (today - dt.timedelta(days=1)):
+                start_date = today
+            else:
+                # 마지막 수집일이 어제보다 더 과거인 경우
+                start_date = last_date + dt.timedelta(days=1)
+
+            end_date = today
             
             log(f"✅ DB에서 {len(companies)}개 종목 로드 완료")
-            log(f"✅ 수집 시작일 설정: {start_date}")
+            log(f"📅 DB 마지막 기록: {last_date}")
+            log(f"✅ 수집 범위: {start_date} ~ {end_date}")
             return mapping, companies, start_date, end_date
 
     finally:
