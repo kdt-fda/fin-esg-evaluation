@@ -71,33 +71,30 @@ web/
 
 ---
 
-# Running the Project (Recommended: Docker)
+# Running with Docker (Recommended)
 
 Docker를 사용하면 Frontend + Backend를 한 번에 실행할 수 있습니다.
 
-## Docker Desktop 실행
 
-Docker Desktop이 실행 중인지 확인합니다.
-
-## 프로젝트 루트에서 실행
+### 프로젝트 루트에서 실행
 
 ```
 docker compose up --build
 ```
 
-## 접속
+### 접속
 
-### Frontend
+#### Frontend
 ```
 http://localhost:5173
 ```
 
-### Backend API
+#### Backend API
 ```
 http://localhost:8000
 ```
 
-### Swagger API Docs
+#### Swagger API Docs
 ```
 http://localhost:8000/docs
 ```
@@ -108,9 +105,7 @@ http://localhost:8000/docs
 
 Docker 없이 로컬에서 직접 실행하는 방법입니다.
 
----
-
-# Backend Setup
+## Backend Setup
 
 backend 디렉토리로 이동
 
@@ -150,7 +145,7 @@ http://127.0.0.1:8000/docs
 
 ---
 
-# Frontend Setup
+## Frontend Setup
 
 frontend 디렉토리로 이동
 
