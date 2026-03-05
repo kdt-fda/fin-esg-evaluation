@@ -54,8 +54,17 @@ def update_kospi200_stocks_table():
     if not login_to_krx():
         print("❌ KRX 로그인 실패로 작업을 중단합니다.")
         return
+    
+    today = datetime.now().strftime("%Y%m%d")
 
-    # 영문 코드와 KRX 지수 코드 매핑
+    print(f"📋 [{today}] 코스피 종목 마스터 정보 로딩 중...")
+    try:
+        all_tickers = stock.get_market_ticker_list(today, market="KOSPI")
+        ticker_name_map = {t: stock.get_market_ticker_name(t) for t in all_tickers}
+    except Exception as e:
+        print(f'마스터 정보 로딩 실패: {e}')
+        return
+
     sector_map = {
         'COMM': '1150', 'CONS': '1151', 'HI': '1152', 'MAT': '1153',
         'ENG': '1154', 'IT': '1155', 'FIN': '1156', 'CS': '1157',
@@ -63,24 +72,21 @@ def update_kospi200_stocks_table():
     }
 
     data = []
-    today = datetime.now().strftime("%Y%m%d")
-
-    print('섹터별 종목 데이터 수집 중...')
     try:
         for eng_code, krx_code in sector_map.items():
             tickers = stock.get_index_portfolio_deposit_file(krx_code, today)
 
             for ticker in tickers:
-                stock_name = stock.get_market_ticker_name(ticker)
+                stock_name = ticker_name_map.get(ticker, "Unknown")
                 data.append((ticker, stock_name, eng_code, True))
 
-            time.sleep(0.3)
+            print(f"✅ {eng_code} 섹터 수집 완료 ({len(tickers)} 종목)")
+            time.sleep(0.1)
 
         if data:
             conn = _connect()
             try:
                 cur = conn.cursor(pymysql.cursors.DictCursor)
-
                 # 기존 종목 비활성화 (업데이트 전 초기화)
                 cur.execute('UPDATE KOSPI200_STOCKS_TB SET is_active = FALSE;')
 
@@ -97,14 +103,14 @@ def update_kospi200_stocks_table():
                 conn.commit()
                 print(f'[{datetime.now()}] KOSPI200 {len(data)}개 종목 업데이트 완료')
             except Exception as e:
-                print(f'오류 발생: {e}')
+                print(f"DB 적재 오류: {e}")
                 conn.rollback()
             finally:
                 conn.close()
         else:
-            print('수집된 종목 데이터가 없습니다.')
+            print("⚠️ 수집된 종목 데이터가 없습니다.")
     except Exception as e:
-        print(f'오류 발생: {e}')
+        print(f'❌ 수집 과정 오류: {e}')
 
 # ---------------------------------------------------------
 # 실행 부분
