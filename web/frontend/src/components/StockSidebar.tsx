@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, RotateCcw, Star } from 'lucide-react';
+import { Search, RotateCcw, Star, ChevronDown } from 'lucide-react';
 
 export interface Stock {
   code: string;
@@ -27,6 +27,10 @@ export default function StockSidebar({ selectedStock, onSelectStock }: StockSide
   // 즐겨찾기 state
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+
+  // 섹터(산업) 필터 state
+  const [selectedSector, setSelectedSector] = useState<string>('ALL');
+  const [sectorOpen, setSectorOpen] = useState(false);
 
   const toggleFavorite = (code: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -71,41 +75,63 @@ export default function StockSidebar({ selectedStock, onSelectStock }: StockSide
 
     fetchStocks();
     return () => controller.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 검색 + 즐겨찾기 필터
+  // DB에서 받은 stocks로 섹터 옵션 만들기
+  const sectorOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of stocks) {
+      const sec = (s.sector ?? '').trim();
+      if (sec) set.add(sec);
+    }
+    const arr = Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'));
+    return ['ALL', ...arr];
+  }, [stocks]);
+
+  // 검색 + 섹터 + 즐겨찾기 필터
   const filteredStocks = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-
     let result = stocks;
 
+    // 검색
     if (q) {
       result = result.filter(
         (stock) => stock.name.toLowerCase().includes(q) || stock.code.includes(q)
       );
     }
 
+    // 섹터 필터 (ALL이면 전체 나열)
+    if (selectedSector !== 'ALL') {
+      result = result.filter((stock) => stock.sector === selectedSector);
+    }
+
+    // 즐겨찾기
     if (showFavoritesOnly) {
       result = result.filter((stock) => favorites.has(stock.code));
     }
 
     return result;
-  }, [stocks, searchTerm, showFavoritesOnly, favorites]);
+  }, [stocks, searchTerm, selectedSector, showFavoritesOnly, favorites]);
 
+  // 초기화 버튼 표시 조건에 섹터/즐겨찾기필터도 포함
   const showReset =
-    !!searchTerm.trim() || (stocks.length > 0 && selectedStock?.code !== stocks[0]?.code);
+    !!searchTerm.trim() ||
+    showFavoritesOnly ||
+    selectedSector !== 'ALL' ||
+    (stocks.length > 0 && selectedStock?.code !== stocks[0]?.code);
 
   const handleReset = () => {
     setSearchTerm('');
-    setShowFavoritesOnly(false); // 필터도 초기화
+    setShowFavoritesOnly(false);
+    setSelectedSector('ALL');
+    setSectorOpen(false);
     if (stocks.length > 0) onSelectStock(stocks[0]);
     listRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
     <div className="w-80 bg-white border-r border-gray-200 h-screen flex flex-col">
-      <div className="p-6 border-b border-gray-200">
+      <div className="px-6 pt-6 pb-3 border-b border-gray-200">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold text-lg">코스피 200 기업</h2>
 
@@ -150,6 +176,7 @@ export default function StockSidebar({ selectedStock, onSelectStock }: StockSide
           </button>
         </div>
 
+        {/* 검색 */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
           <input
@@ -159,6 +186,55 @@ export default function StockSidebar({ selectedStock, onSelectStock }: StockSide
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+        </div>
+
+        {/* 작은 섹터 드롭다운 (오른쪽 정렬) */}
+        <div className="mt-1.5 flex justify-end relative">
+          <button
+            type="button"
+            onClick={() => setSectorOpen((v) => !v)}
+            className="h-6 text-xs px-2 py-0 inline-flex items-center gap-1 text-gray-600 hover:text-gray-800"
+            aria-expanded={sectorOpen}
+            title="산업별 필터"
+          >
+            {selectedSector === 'ALL' ? '산업별' : selectedSector}
+            <ChevronDown className={`h-3 w-3 transition-transform ${sectorOpen ? 'rotate-180' : ''}`} />
+          </button>
+
+          {sectorOpen && (
+            <div className="absolute right-0 top-7 bg-white border border-gray-200 rounded-md shadow-lg z-10 min-w-[120px] max-h-56 overflow-y-auto">
+              <div className="py-0.5">
+                <button
+                  type="button"
+                  className="w-full text-left text-xs h-7 px-2 hover:bg-gray-100"
+                  onClick={() => {
+                    setSelectedSector('ALL');
+                    setSectorOpen(false);
+                    listRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                >
+                  전체
+                </button>
+
+                {sectorOptions
+                  .filter((s) => s !== 'ALL')
+                  .map((sec) => (
+                    <button
+                      key={sec}
+                      type="button"
+                      className="w-full text-left text-xs h-7 px-2 hover:bg-gray-100"
+                      onClick={() => {
+                        setSelectedSector(sec);
+                        setSectorOpen(false);
+                        listRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
+                    >
+                      {sec}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {loading && <div className="mt-3 text-sm text-gray-500">불러오는 중...</div>}
