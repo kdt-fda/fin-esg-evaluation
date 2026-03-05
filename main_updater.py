@@ -72,10 +72,10 @@ if __name__ == "__main__":
     #logging.info("🏃 즉시 업데이트 모드로 가동합니다...")
     #run_total_update_process()
 
-    # 매일 22:30분에 실행되도록 예약
-    schedule.every().day.at("22:30").do(run_total_update_process)
+    # 매일 23:00분에 실행되도록 예약
+    schedule.every().day.at("23:00").do(run_total_update_process)
     
-    logging.info("⏰ 스케줄러 활성화: 매일 22:30에 업데이트를 시작합니다.")
+    logging.info("⏰ 스케줄러 활성화: 매일 23:00에 업데이트를 시작합니다.")
 
     # 무한 루프를 돌며 정해진 시간이 되었는지 체크
     while True:
