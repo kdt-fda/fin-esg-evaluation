@@ -1,5 +1,6 @@
-import pymysql
 import os
+import requests
+import pymysql
 import pandas as pd
 import pandas_ta as ta
 from pykrx import stock
@@ -8,9 +9,43 @@ import time
 import calendar
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
+from pykrx.website.comm import webio
 
 # .env 파일 로드
 load_dotenv()
+
+# ==========================================
+# 0. 전역 세션 패치
+# ==========================================
+_session = requests.Session()
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+
+webio.Post.read = lambda self, **params: _session.post(self.url, headers=self.headers, data=params, timeout=15)
+webio.Get.read = lambda self, **params: _session.get(self.url, headers=self.headers, params=params, timeout=15)
+
+def login_to_krx():
+    """KRX 데이터 포털 로그인 로직 (세션 획득용)"""
+    KRX_ID = os.getenv("KRX_ID")
+    KRX_PW = os.getenv("KRX_PW")
+    
+    if not KRX_ID or not KRX_PW:
+        print("⚠️ KRX 계정 정보가 .env에 없습니다. 익명 세션으로 진행합니다.")
+        return False
+
+    _LOGIN_PAGE = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001.cmd"
+    _LOGIN_URL = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001D1.cmd"
+
+    try:
+        _session.get(_LOGIN_PAGE, headers={"User-Agent": _UA})
+        payload = {"mbrId": KRX_ID, "pw": KRX_PW}
+        resp = _session.post(_LOGIN_URL, data=payload, headers={"User-Agent": _UA, "Referer": _LOGIN_PAGE})
+        
+        if resp.json().get("_error_code") in ["CD001", "CD011"]:
+            print("✅ KRX 로그인 성공 및 세션 유지 중")
+            return True
+        return False
+    except:
+        return False
 
 # ==========================================
 # 1. DB 연결 설정
@@ -60,23 +95,20 @@ def get_last_update_date(ticker, cur):
     cur.execute(sql, (ticker,))
     result = cur.fetchone()
 
-    # 결과가 딕셔너리 형태일 때 (이름으로 접근)
     if isinstance(result, dict) and result.get('last_date'):
         return result['last_date'].strftime("%Y%m%d")
-    # 결과가 튜플 형태일 때 (인덱스로 접근)
     elif isinstance(result, (tuple, list)) and result[0]:
         return result[0].strftime("%Y%m%d")
     
     return "20220601"
 
 # ==========================================
-# 2. 데이터 수집 (시작일 2022-06-01 고정)
+# 2. 데이터 수집
 # ==========================================
 def fetch_all_data(ticker, s_date):
     ticker = clean_ticker(ticker)
     e_date = datetime.now().strftime("%Y%m%d")
     
-    # 지표 계산(MA120 등)을 위해 수집 시작일보다 200일 전 데이터부터 실제로 가져옴
     fetch_start = (datetime.strptime(s_date, "%Y%m%d") - timedelta(days=200)).strftime("%Y%m%d")
     
     try:
@@ -91,7 +123,7 @@ def fetch_all_data(ticker, s_date):
             if not temp_inv.empty and '외국인합계' in temp_inv.columns:
                 df_inv['Foreign_Net_Amt'] = temp_inv['외국인합계']
                 df_inv['Inst_Net_Amt'] = temp_inv['기관합계']
-        except: pass # 실패 시 None 유지
+        except: pass
 
         # 3) 공매도 정보
         try:
@@ -232,12 +264,14 @@ def process_single_stock(target):
 # 5. 메인 실행부 (병렬 처리 적용)
 # ==========================================
 def run_stock_crawler():
+    # KRX 로그인
+    login_to_krx()
+
     targets = get_targets_from_db()
     if not targets: return
     
-    print(f"🚀 {len(targets)}개 종목 병렬 증분 수집 시작 (Thread: 6)")
+    print(f"🚀 {len(targets)}개 종목 수집 시작 (Thread: 6)")
     
-    # 🎯 ThreadPoolExecutor를 사용한 병렬 처리
     with ThreadPoolExecutor(max_workers=6) as executor:
         results = list(executor.map(process_single_stock, targets))
     
