@@ -1240,10 +1240,10 @@ def process_industrials():
                 else:
                     v_ratio = float(v_ratio)
 
-            data.append((
-                row['Date'], row['ticker'], v_ratio, row['logistics_momentum'],
-                row['ship_vol_lag3'], row['mfg_lag3'], row['mfg_lag6'], row['z_score']
-            ))
+                data.append((
+                    row['Date'], row['ticker'], v_ratio, row['logistics_momentum'],
+                    row['ship_vol_lag3'], row['mfg_lag3'], row['mfg_lag6'], row['z_score']
+                ))
             
             sql = """
                 INSERT INTO INDUSTRIALS_TB (
