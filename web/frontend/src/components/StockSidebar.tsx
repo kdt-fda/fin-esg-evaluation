@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Search } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Search, RotateCcw } from 'lucide-react';
 
 export interface Stock {
   code: string;
@@ -22,6 +22,8 @@ export default function StockSidebar({ selectedStock, onSelectStock }: StockSide
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const listRef = useRef<HTMLDivElement | null>(null);
+
   // DB에서 코스피200 종목 로드
   useEffect(() => {
     const controller = new AbortController();
@@ -31,10 +33,9 @@ export default function StockSidebar({ selectedStock, onSelectStock }: StockSide
       setErrorMsg(null);
 
       try {
-        const res = await fetch(
-          `${API_BASE}/api/stocks?active_only=true&limit=500`,
-          { signal: controller.signal }
-        );
+        const res = await fetch(`${API_BASE}/api/stocks?active_only=true&limit=500`, {
+          signal: controller.signal,
+        });
 
         if (!res.ok) throw new Error(await res.text());
 
@@ -56,7 +57,6 @@ export default function StockSidebar({ selectedStock, onSelectStock }: StockSide
 
     fetchStocks();
     return () => controller.abort();
-    // selectedStock을 deps에 넣으면 매번 다시 불러오니 제외
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -65,23 +65,39 @@ export default function StockSidebar({ selectedStock, onSelectStock }: StockSide
     const q = searchTerm.trim().toLowerCase();
     if (!q) return stocks;
 
-    return stocks.filter(
-      (stock) =>
-        stock.name.toLowerCase().includes(q) ||
-        stock.code.includes(q)
-    );
+    return stocks.filter((stock) => stock.name.toLowerCase().includes(q) || stock.code.includes(q));
   }, [stocks, searchTerm]);
+
+  const showReset =
+    !!searchTerm.trim() || (stocks.length > 0 && selectedStock?.code !== stocks[0]?.code);
+
+  const handleReset = () => {
+    setSearchTerm('');
+    if (stocks.length > 0) onSelectStock(stocks[0]); // 선택 종목 초기화
+    listRef.current?.scrollTo({ top: 0, behavior: 'smooth' }); // (선택) 스크롤 맨 위
+  };
 
   return (
     <div className="w-80 bg-white border-r border-gray-200 h-screen flex flex-col">
       <div className="p-6 border-b border-gray-200">
-        <h2 className="font-semibold text-lg mb-4">코스피 200 기업</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-lg">코스피 200 기업</h2>
+
+          {showReset && (
+            <button
+              onClick={handleReset}
+              className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 transition-colors"
+              title="초기화"
+              type="button"
+            >
+              <RotateCcw size={14} />
+              <span>초기화</span>
+            </button>
+          )}
+        </div>
 
         <div className="relative">
-          <Search
-            className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
-            size={20}
-          />
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
           <input
             type="text"
             placeholder="기업명 또는 코드 검색"
@@ -95,7 +111,7 @@ export default function StockSidebar({ selectedStock, onSelectStock }: StockSide
         {errorMsg && <div className="mt-3 text-sm text-red-500">{errorMsg}</div>}
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div ref={listRef} className="flex-1 overflow-y-auto">
         {filteredStocks.map((stock) => (
           <button
             key={stock.code}
