@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import StockSidebar from './components/StockSidebar';
 import type { Stock } from './components/StockSidebar';
 
-import PredictionChart from './components/PredictionChart';
-import type { ChartDataPoint } from './components/PredictionChart';
+import ShortTermPredictionChart from './components/ShortTermChart';
+import type { ChartDataPoint } from './components/ShortTermChart';
+import LongTermChart from './components/LongTermChart';
 
 import PredictionDetailPage from './components/PredictionDetailPage';
 import { Activity, Clock, Menu, X } from 'lucide-react';
@@ -11,12 +12,19 @@ import { Activity, Clock, Menu, X } from 'lucide-react';
 type PredictionResponse = {
   confidence: number;
   data: ChartDataPoint[];
+  pastCount?: number;
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000';
 
 function formatYYYYMMDD(d: Date) {
   return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function calcPastCount(points: ChartDataPoint[]) {
+  if (!points || points.length === 0) return 0;
+  const firstPredIdx = points.findIndex((p) => p.predicted !== undefined && p.predicted !== null);
+  return firstPredIdx === -1 ? points.length : firstPredIdx;
 }
 
 export default function App() {
@@ -28,15 +36,29 @@ export default function App() {
   const [shortConfidence, setShortConfidence] = useState<number>(0);
   const [longConfidence, setLongConfidence] = useState<number>(0);
 
+  const [shortPastCountFromApi, setShortPastCountFromApi] = useState<number>(0);
+
   const [timeUntilUpdate, setTimeUntilUpdate] = useState('');
   const [detailData, setDetailData] = useState<{ data: ChartDataPoint; stock: Stock } | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const [currentDate, setCurrentDate] = useState('');
-
-  // 사이드바 토글 state
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  // API가 pastCount를 내려주면 우선 사용, 없으면 프론트에서 fallback 계산
+  const shortPastCountFallback = useMemo(() => calcPastCount(shortTermData), [shortTermData]);
+  const shortPastCount = shortPastCountFromApi > 0 ? shortPastCountFromApi : shortPastCountFallback;
+
+  // 단기 데이터에서 현재가 추정
+  const basePrice = useMemo(() => {
+    if (shortTermData.length === 0) return 0;
+
+    const latestActual = [...shortTermData]
+      .reverse()
+      .find((d) => d.actual !== undefined && d.actual !== null);
+
+    return latestActual?.actual ?? 0;
+  }, [shortTermData]);
 
   // 종목 리스트 로드
   useEffect(() => {
@@ -70,10 +92,6 @@ export default function App() {
 
     fetchStocks();
     return () => controller.abort();
-  }, []);
-
-  useEffect(() => {
-    setCurrentDate(formatYYYYMMDD(new Date()));
   }, []);
 
   // 다음날 0시까지 남은 시간
@@ -126,6 +144,7 @@ export default function App() {
         setLongTermData(longJson.data ?? []);
         setShortConfidence(shortJson.confidence ?? 0);
         setLongConfidence(longJson.confidence ?? 0);
+        setShortPastCountFromApi(shortJson.pastCount ?? 0);
       } catch (err: any) {
         if (err?.name === 'AbortError') return;
 
@@ -133,6 +152,9 @@ export default function App() {
         setErrorMsg(err?.message ?? '예측 데이터를 불러오지 못했습니다.');
         setShortTermData([]);
         setLongTermData([]);
+        setShortConfidence(0);
+        setLongConfidence(0);
+        setShortPastCountFromApi(0);
       } finally {
         setLoading(false);
       }
@@ -149,11 +171,10 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-gray-50">
-
       {/* Sidebar */}
       <div className={`transition-all duration-300 ${isSidebarOpen ? 'w-80' : 'w-0'}`}>
-        {isSidebarOpen && (
-          selectedStock ? (
+        {isSidebarOpen &&
+          (selectedStock ? (
             <StockSidebar selectedStock={selectedStock} onSelectStock={setSelectedStock} />
           ) : (
             <div className="w-80 bg-white border-r border-gray-200 h-screen flex flex-col">
@@ -162,18 +183,16 @@ export default function App() {
                 <p className="text-sm text-gray-500">종목 불러오는 중...</p>
               </div>
             </div>
-          )
-        )}
+          ))}
       </div>
 
       {/* Main 영역 */}
       <div className="flex-1 flex flex-col overflow-hidden relative">
-
         {/* Sidebar Toggle Button */}
         <button
           onClick={() => setIsSidebarOpen(!isSidebarOpen)}
           className="absolute left-4 top-6 z-10 p-2 bg-white rounded-lg shadow-md hover:bg-gray-50 transition-colors border border-gray-200"
-          title={isSidebarOpen ? "사이드바 접기" : "사이드바 펼치기"}
+          title={isSidebarOpen ? '사이드바 접기' : '사이드바 펼치기'}
         >
           {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
         </button>
@@ -182,18 +201,14 @@ export default function App() {
         <header className="bg-white border-b border-gray-200 px-8 py-6">
           <div className="flex items-center justify-center gap-3 mb-2">
             <Activity className="text-blue-600" size={28} />
-            <h1 className="text-3xl font-bold text-gray-900">
-              설명 가능한 주가 예측 기반 투자 참고 플랫폼
-            </h1>
+            <h1 className="text-3xl font-bold text-gray-900">설명 가능한 주가 예측 기반 투자 참고 플랫폼</h1>
           </div>
 
           <div className="flex items-center justify-center gap-2">
             <span className="text-sm text-gray-500">현재 종목:</span>
 
             <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-400 to-blue-500 text-white rounded-full shadow-md">
-              <span className="font-semibold">
-                {selectedStock?.name ?? '-'}
-              </span>
+              <span className="font-semibold">{selectedStock?.name ?? '-'}</span>
 
               <span className="text-xs opacity-90 bg-white/20 px-2 py-0.5 rounded-full">
                 {selectedStock?.code ?? '-'}
@@ -209,20 +224,19 @@ export default function App() {
         {/* Main */}
         <main className="flex-1 overflow-y-auto px-8 py-6">
           <div className="flex gap-6 mb-6">
-            <PredictionChart
+            <ShortTermPredictionChart
               title="단기 예측 차트"
               data={shortTermData}
               confidence={shortConfidence}
-              isShortTerm={true}
+              pastCount={shortPastCount}
               onReasonClick={handleReasonClick}
             />
 
-            <PredictionChart
-              title="중장기 성장 예측 차트"
-              data={longTermData}
+            <LongTermChart
+              stockName={selectedStock?.name ?? '-'}
+              stockCode={selectedStock?.code ?? '-'}
+              basePrice={basePrice}
               confidence={longConfidence}
-              isShortTerm={false}
-              onReasonClick={handleReasonClick}
             />
           </div>
 
@@ -261,9 +275,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="absolute right-4 bottom-3 text-sm text-gray-400">
-            © Team MER-M
-          </div>
+          <div className="absolute right-4 bottom-3 text-sm text-gray-400">© Team MER-M</div>
         </footer>
       </div>
 

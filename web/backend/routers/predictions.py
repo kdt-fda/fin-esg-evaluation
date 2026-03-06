@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, HTTPException, Query
 from datetime import timedelta
 import os
@@ -51,10 +50,15 @@ def _get_stock_name_by_ticker(ticker: str) -> str | None:
 
 # =========================
 # Chart formatting helpers
-# React ChartDataPoint.date가 "M/D" 형태로 쓰이도록 맞춤
 # =========================
 def _to_mmdd(d: pd.Timestamp) -> str:
     return f"{int(d.month)}/{int(d.day)}"
+
+
+# 프론트에서 MM/DD로 표시
+def _to_ymd(d: pd.Timestamp) -> str:
+    d = pd.to_datetime(d)
+    return d.strftime("%Y-%m-%d")
 
 
 def _to_month_label(d: pd.Timestamp) -> str:
@@ -115,36 +119,50 @@ def build_short_chart_points(
     horizon_days: int,
     preds: list[float] | None = None,
     include_reasons: bool = True,
-) -> list[dict]:
+    past_window: int | None = None,  # 과거를 최근 N개로 제한. None이면 전부 내려줌
+) -> tuple[list[dict], int]:
     """
-    단기 차트용 데이터 생성.
-    - 과거 7개: actual
+    단기 차트용 데이터 생성(슬라이더용 과거 포함).
+    - 과거: (가능하면 2023~오늘) actual 전부
+      - 너무 길면 past_window로 최근 N개만 내릴 수 있음
     - 오늘(마지막 row): actual + predicted(기준값)
     - 미래 horizon_days: predicted (+ optional reason)
 
     preds:
       - TODO: XGBoost 단기 모델 예측 결과를 [horizon_days] 길이로 넣어주면 더미 생성이 필요 없음
+
+    반환:
+      (data_points, pastCount)
+      - pastCount = 예측 시작 전까지의 포인트 수(=과거 actual 개수)
     """
     df = df.sort_values("trade_date").copy()
     df["trade_date"] = pd.to_datetime(df["trade_date"])
 
     if df.empty or "close" not in df.columns:
-        return []
+        return [], 0
 
-    # 과거 7 + 오늘
-    tail = df.tail(8)
-    base_close = float(tail.iloc[-1]["close"])
-    base_date = pd.to_datetime(tail.iloc[-1]["trade_date"])
+    # 과거 구간 선택
+    hist = df
+    if past_window is not None and past_window > 0:
+        hist = df.tail(past_window).copy()
+
+    hist = hist.reset_index(drop=True)
+
+    base_close = float(hist.iloc[-1]["close"])
+    base_date = pd.to_datetime(hist.iloc[-1]["trade_date"])
 
     out: list[dict] = []
 
-    # 과거 actual
-    for i in range(len(tail) - 1):
-        row = tail.iloc[i]
-        out.append({"date": _to_mmdd(row["trade_date"]), "actual": float(row["close"])})
+    # 과거 actual 전체(또는 최근 N개)
+    for i in range(len(hist)):
+        row = hist.iloc[i]
+        out.append({"date": _to_ymd(row["trade_date"]), "actual": float(row["close"])})
+
+    past_count = len(out)
 
     # 오늘 actual+predicted(기준)
-    out.append({"date": _to_mmdd(base_date), "actual": base_close, "predicted": base_close})
+    if out:
+        out[-1]["predicted"] = base_close
 
     # 미래 predicted 생성
     if preds is None:
@@ -162,7 +180,7 @@ def build_short_chart_points(
 
         predicted_price = float(preds[k - 1])
         point = {
-            "date": _to_mmdd(future_date),
+            "date": _to_ymd(future_date),
             "predicted": predicted_price,
         }
 
@@ -176,7 +194,7 @@ def build_short_chart_points(
         out.append(point)
         current_for_change = predicted_price
 
-    return out
+    return out, past_count
 
 
 def build_long_chart_points(
@@ -203,10 +221,10 @@ def build_long_chart_points(
 
     close_series = df.set_index("trade_date")["close"].astype(float)
     try:
-        s = close_series.resample("ME").last().dropna()  
+        s = close_series.resample("ME").last().dropna()
     except ValueError:
         s = close_series.resample("M").last().dropna()
-    
+
     if s.empty:
         return []
 
@@ -268,7 +286,8 @@ def predict_short(
     code: str = Query(..., description="ticker 예: 005930"),
     start_date: str | None = Query(None, description="YYYY-MM-DD"),
     end_date: str | None = Query(None, description="YYYY-MM-DD"),
-    horizon_days: int = Query(7, ge=1, le=30),
+    horizon_days: int = Query(20, ge=1, le=30),  # 기본값 20일 예측
+    past_window: int | None = Query(None, description="과거를 최근 N개만 내려받고 싶으면 설정 (None=전체)"),
 ):
     stock_name = _get_stock_name_by_ticker(code)
     if not stock_name:
@@ -282,15 +301,16 @@ def predict_short(
     # 예: preds_short = predictor.predict_short(df, horizon_days)
     preds_short = None  # 모델 연결 전에는 None -> 더미 생성
 
-    data = build_short_chart_points(
+    data, past_count = build_short_chart_points(
         df=df,
         horizon_days=horizon_days,
         preds=preds_short,            # TODO: 모델 예측값으로 교체
         include_reasons=True,         # TODO: SHAP 등 실제 근거 준비되면 True 유지, 아니면 False도 가능
+        past_window=past_window,
     )
 
     # TODO: confidence를 모델의 성능/불확실성 기반으로 계산하거나 DB에 저장된 값을 내려주기
-    return {"confidence": 85, "data": data}
+    return {"confidence": 85, "pastCount": past_count, "data": data}
 
 
 @router.get("/long")
