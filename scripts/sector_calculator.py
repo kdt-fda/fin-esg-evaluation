@@ -1226,23 +1226,36 @@ def process_industrials():
 
     # 4. DB 적재
     if all_results:
-        final_df = pd.concat(all_results).replace({np.nan: None})
-        final_df = final_df.where(pd.notnull(final_df), None)
+        import math
+        final_df = pd.concat(all_results)
+        records = final_df.to_dict('records')
+
         conn = _connect()
         try:
             cur = conn.cursor()
-
             data = []
-            for _, row in final_df.iterrows():
-                v_ratio = row['vol_ratio']
-                if v_ratio is None or not np.isfinite(float(v_ratio or 0)) or float(v_ratio) > 999999:
-                    v_ratio = None
-                else:
-                    v_ratio = float(v_ratio)
+
+            for row in records:
+                def clean_val(val):
+                    try:
+                        if val is None or not math.isfinite(float(val)):
+                            return None
+                        v = float(val)
+                        if abs(v) >= 999999: 
+                            return None
+                        return v
+                    except:
+                        return None
 
                 data.append((
-                    row['Date'], row['ticker'], v_ratio, row['logistics_momentum'],
-                    row['ship_vol_lag3'], row['mfg_lag3'], row['mfg_lag6'], row['z_score']
+                    row['Date'], 
+                    row['ticker'], 
+                    clean_val(row.get('vol_ratio')),
+                    clean_val(row.get('logistics_momentum')),
+                    clean_val(row.get('ship_vol_lag3')),
+                    clean_val(row.get('mfg_lag3')),
+                    clean_val(row.get('mfg_lag6')),
+                    clean_val(row.get('z_score'))   
                 ))
             
             sql = """
