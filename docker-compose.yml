@@ -1,10 +1,11 @@
 services:
-  # 크롤러
   crawler:
     build:
       context: .
       dockerfile: Dockerfile.crawler
-    image: fin-crawler-bot:latest
+      no_cache: true
+      pull: true
+    image: kyucc/fin-crawler-bot:latest
     container_name: stock-crawler-container
     restart: always
     env_file:
@@ -15,7 +16,6 @@ services:
     tty: true
     stdin_open: true
 
-  # 분석기
   #analyzer:
   #  build:
   #    context: .
