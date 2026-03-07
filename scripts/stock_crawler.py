@@ -33,10 +33,12 @@ def login_to_krx():
         return False
 
     _LOGIN_PAGE = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001.cmd"
+    _LOGIN_JSP  = "https://data.krx.co.kr/contents/MDC/COMS/client/view/login.jsp?site=mdc"
     _LOGIN_URL = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001D1.cmd"
 
     try:
         _session.get(_LOGIN_PAGE, headers={"User-Agent": _UA})
+        _session.get(_LOGIN_JSP, headers={"User-Agent": _UA, "Referer": _LOGIN_PAGE})
         payload = {"mbrId": KRX_ID, "pw": KRX_PW}
         resp = _session.post(_LOGIN_URL, data=payload, headers={"User-Agent": _UA, "Referer": _LOGIN_PAGE})
         
@@ -69,9 +71,9 @@ def _connect():
     return conn
 
 def safe_int(val):
+    if pd.isna(val): return None
     try:
-        if pd.isna(val): return None
-        return int(val)
+        return int(float(val))
     except:
         return None
 
@@ -126,19 +128,22 @@ def fetch_all_data(ticker, s_date):
         except: pass
 
         # 3) 공매도 정보
+        df_short_val = pd.DataFrame(index=df_price.index, columns=['Short_Balance'])
         try:
             df_short = stock.get_shorting_balance_by_date(fetch_start, e_date, ticker)
-            found_col = next((c for c in ['공매도잔고금액', '공매도금액', '잔고금액'] if c in df_short.columns), None)
-            if found_col:
-                df_short_val = df_short[[found_col]].rename(columns={found_col: 'Short_Balance'})
-            else:
-                df_short_val = pd.DataFrame(index=df_price.index); df_short_val['Short_Balance'] = 0
-        except:
-            df_short_val = pd.DataFrame(index=df_price.index); df_short_val['Short_Balance'] = 0
 
-        df_merged = df_price.join(df_inv, how='left')
-        df_merged = df_merged.join(df_short_val, how='left')
+            if not df_short.empty:
+                target_cols = ['공매도금액', '공매도잔고금액', '잔고금액']
+                found_col = next((c for c in target_cols if c in df_short.columns), None)
 
+                if found_col:
+                    df_short.index = pd.to_datetime(df_short.index).strftime('%Y-%m-%d')
+                    price_dates = pd.to_datetime(df_price.index).strftime('%Y-%m-%d')
+                    short_dict = df_short[found_col].to_dict()
+                    df_short_val['Short_Balance'] = [short_dict.get(d) for d in price_dates]
+        except: pass
+
+        df_merged = df_price.join(df_inv, how='left').join(df_short_val, how='left')
         return df_merged
     
     except Exception as e:
