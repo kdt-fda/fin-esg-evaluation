@@ -71,11 +71,9 @@ def _connect():
     return conn
 
 def safe_int(val):
-    if pd.isna(val): return None
-    try:
-        return int(float(val))
-    except:
-        return None
+    if pd.isna(val) or val is None: return None
+    try: return int(float(val))
+    except: return None
 
 def clean_ticker(x):
     x = str(x).strip()
@@ -128,22 +126,18 @@ def fetch_all_data(ticker, s_date):
         except: pass
 
         # 3) 공매도 정보
-        df_short_val = pd.DataFrame(index=df_price.index, columns=['Short_Balance'])
+        df_short = pd.DataFrame(index=df_price.index, columns=['Short_Balance'])
         try:
-            df_short = stock.get_shorting_balance_by_date(fetch_start, e_date, ticker)
-
-            if not df_short.empty:
+            df_short_raw = stock.get_shorting_balance_by_date(fetch_start, e_date, ticker)
+            if not df_short_raw.empty:
                 target_cols = ['공매도금액', '공매도잔고금액', '잔고금액']
-                found_col = next((c for c in target_cols if c in df_short.columns), None)
+                found_col = next((c for c in target_cols if c in df_short_raw.columns), None)
 
                 if found_col:
-                    df_short.index = pd.to_datetime(df_short.index).strftime('%Y-%m-%d')
-                    price_dates = pd.to_datetime(df_price.index).strftime('%Y-%m-%d')
-                    short_dict = df_short[found_col].to_dict()
-                    df_short_val['Short_Balance'] = [short_dict.get(d) for d in price_dates]
+                    df_short['Short_Balance'] = df_short_raw[found_col].reindex(df_price.index, method='nearest')
         except: pass
 
-        df_merged = df_price.join(df_inv, how='left').join(df_short_val, how='left')
+        df_merged = df_price.join(df_inv, how='left').join(df_short, how='left')
         return df_merged
     
     except Exception as e:
