@@ -42,28 +42,26 @@ def run_total_update_process():
     try:
         step1_start = datetime.now()
         logging.info("Step 1. 종목/섹터 마스터 데이터 업데이트 중...")
-        status = run_step1_pipeline()
+        is_bday = run_step1_pipeline()
         durations['Step 1'] = datetime.now() - step1_start
 
-        if status is False:
-            logging.info("📅 휴장일로 인해 전체 프로세스를 종료합니다.")
-            logging.info("="*50)
-            return
+        if not is_bday:
+            logging.info("오늘은 휴장일입니다.")
 
         logging.info("⏳ Step 1 완료. 서버 부하 방지를 위해 5초간 대기합니다...")
         time.sleep(5)
         
         step2_start = datetime.now()
         logging.info("Step 2. 원천 데이터(주가/거시경제/재무/뉴스) 수집 및 적재 중...")
-        run_step2_pipeline()
+        run_step2_pipeline(is_bday=is_bday)
         durations['Step 2'] = datetime.now() - step2_start
 
         logging.info("⏳ Step 2 완료. 서버 부하 방지를 위해 5초간 대기합니다...")
         time.sleep(5)
-        
+
         step3_start = datetime.now()
         logging.info("Step 3. 파생 지표 계산 및 퀀트 DB 최종 적재 중...")
-        run_step3_pipeline()
+        run_step3_pipeline(is_bday=is_bday)
         durations['Step 3'] = datetime.now() - step3_start
 
         total_duration = datetime.now() - total_start_time

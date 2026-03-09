@@ -13,31 +13,33 @@ def is_quarterly_update_time():
     today = datetime.date.today()
     return today.month in [3, 5, 8, 11] and today.day >= 15
 
-def run_step2_pipeline():
-    """
-    main_updater.py에서 호출할 메인 함수
-    """
-    logging.info("--- Step 2: 시장 데이터(주가/거시/재무) 수집 시작 ---")
+def run_step2_pipeline(is_bday=True):
+    """main_updater.py에서 호출할 Step 2 함수 (주가/거시/재무/뉴스 데이터)"""
+    logging.info("--- Step 2: 주가/거시/재무/뉴스 데이터 업데이트 시작 ---")
     
     try:
-        logging.info("1. 주가 데이터 수집 중...")
-        run_stock_crawler()
+        if is_bday:
+            logging.info("1. 주가 데이터 업데이트 중...")
+            run_stock_crawler()
         
-        logging.info("2. 거시경제 지표 수집 중...")
-        run_macro_collector(is_initial=False)
+            logging.info("2. 거시경제 지표 업데이트 중...")
+            run_macro_collector(is_initial=False)
         
-        if is_quarterly_update_time():
-            logging.info("3. 공시 시즌 - 펀더멘털 데이터 업데이트 중...")
-            run_fundamental_crawler()
+            if is_quarterly_update_time():
+                logging.info("3. 공시 시즌 - 펀더멘털 데이터 업데이트 중...")
+                run_fundamental_crawler()
+            else:
+                logging.info("3. 펀더멘털 지표 공시 시즌이 아닙니다.")
+
         else:
-            logging.info("3. 펀더멘털 지표 공시 시즌이 아닙니다.")
+            logging.info("오늘은 휴장일입니다. 시장 데이터 업데이트를 생략합니다.")
         
         logging.info("4. 뉴스 데이터 파이프라인 수행 중...")
         run_news_processor()
 
-        logging.info("Step 2 각종 지표 수집 및 적재 완료")
+        logging.info("Step 2 각종 지표 업데이트 및 적재 완료")
 
     except Exception as e:
-        logging.error(f"Step 2 수행 중 치명적 오류 발생: {str(e)}", exc_info=True)
+        logging.error(f"Step 2 수행 중 오류 발생: {str(e)}", exc_info=True)
         print(f"❌ Step 2 실패: {e}")
         raise e
