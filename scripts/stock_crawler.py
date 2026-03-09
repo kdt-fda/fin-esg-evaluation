@@ -5,7 +5,6 @@ import pandas as pd
 import pandas_ta as ta
 from pykrx import stock
 from datetime import datetime, timedelta
-import time
 import calendar
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
