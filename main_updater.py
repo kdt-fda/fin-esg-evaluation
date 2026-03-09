@@ -30,6 +30,13 @@ logging.basicConfig(
     ]
 )
 
+logging.getLogger("pykrx").setLevel(logging.CRITICAL)
+logging.getLogger("huggingface_hub").setLevel(logging.CRITICAL)
+logging.getLogger("transformers").setLevel(logging.CRITICAL)
+logging.getLogger("urllib3").setLevel(logging.CRITICAL)
+logging.getLogger("filelock").setLevel(logging.CRITICAL)
+os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
+
 def run_total_update_process():
     """전체 데이터 갱신 프로세스 통합 컨트롤러"""
     total_start_time = datetime.now()
@@ -76,8 +83,8 @@ def run_total_update_process():
         logging.critical(f"🚨 시스템 중단 발생: {str(e)}", exc_info=True)
 
 if __name__ == "__main__":
-    schedule.every().day.at("23:00").do(run_total_update_process)
-    logging.info("⏰ 스케줄러 활성화: 매일 23:00에 업데이트를 시작합니다.")
+    schedule.every().day.at("23:30").do(run_total_update_process)
+    logging.info("⏰ 스케줄러 활성화: 매일 23:30에 업데이트를 시작합니다.")
 
     while True:
         schedule.run_pending()
