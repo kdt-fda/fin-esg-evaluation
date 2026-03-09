@@ -7,10 +7,13 @@ from database.kospi200_stocks_tb_updater import update_kospi200_stocks_table
 def is_business_day():
     """오늘이 개장일인지 확인"""
     try:
-        today_str = datetime.now().strftime("%Y%m%d")
-        b_days = stock.get_business_days(today_str, today_str)
+        now = datetime.now()
+        b_days = stock.get_business_days(now.year, now.month)
+
+        today_str = now.strftime("%Y-%m-%d")
+        b_days_str = [day.strftime("%Y-%m-%d") for day in b_days]
         
-        if len(b_days) > 0:
+        if today_str in b_days_str:
             return True
         return False
         
