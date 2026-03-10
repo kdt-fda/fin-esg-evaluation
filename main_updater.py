@@ -17,9 +17,9 @@ from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from scripts.step1_base_updater import run_step1_pipeline
-from scripts.step2_market_data_updater import run_step2_pipeline
-from scripts.step3_indicator_calculator import run_step3_pipeline
+from crawler.step1_base_updater import run_step1_pipeline
+from crawler.step2_market_data_updater import run_step2_pipeline
+from crawler.step3_indicator_calculator import run_step3_pipeline
 
 logging.basicConfig(
     level=logging.INFO,

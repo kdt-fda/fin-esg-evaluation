@@ -1,9 +1,9 @@
 import logging
 import datetime
-from scripts.stock_crawler import run_stock_crawler
-from scripts.macro_collector import run_macro_collector
-from scripts.fundamental_crawler import run_fundamental_crawler
-from scripts.news_processor import run_news_processor
+from crawler.stock_crawler import run_stock_crawler
+from crawler.macro_collector import run_macro_collector
+from crawler.fundamental_crawler import run_fundamental_crawler
+from crawler.news_processor import run_news_processor
 
 def is_quarterly_update_time():
     """

@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
-from scripts.common_calculator import run_common_indicator_calculator
-from scripts.sector_calculator import run_sector_indicator_calculator
+from crawler.common_calculator import run_common_indicator_calculator
+from crawler.sector_calculator import run_sector_indicator_calculator
 
 def run_step3_pipeline(is_bday=True):
     """main_updater.py에서 호출할 Step 3 함수 (공통/섹터별 파생 지표)"""
