@@ -17,7 +17,6 @@ web/
 │   ├── db/
 │   ├── routers/
 │   ├── schemas/
-│   ├── services/
 │   ├── __init__.py
 │   ├── main.py
 │   ├── requirements.txt
@@ -28,7 +27,8 @@ web/
 │   ├── public/
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── PredictionChart.tsx
+│   │   │   ├── LongTermChart.tsx
+│   │   │   ├── ShortTermChart.tsx
 │   │   │   ├── PredictionDetailPage.tsx
 │   │   │   └── StockSidebar.tsx
 │   │   ├── styles/
