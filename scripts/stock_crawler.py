@@ -70,8 +70,13 @@ def _connect():
     return conn
 
 def safe_int(val):
-    if pd.isna(val) or val is None: return None
+    if pd.isna(val) or val is None or val == '': return None
     try: return int(float(val))
+    except: return None
+
+def safe_float(val):
+    if pd.isna(val) or val is None or val == '': return None
+    try: return float(val)
     except: return None
 
 def clean_ticker(x):
@@ -149,8 +154,12 @@ def fetch_all_data(ticker, s_date):
 def calculate_indicators(df):
     rename = {'시가':'Open', '고가':'High', '저가':'Low', '종가':'Close', '거래량':'Volume'}
     df = df.rename(columns=rename)
-    
-    if len(df) < 120: return df
+
+    indicator_cols = ['MA5', 'MA20', 'MA60', 'MA120', 'BB_Upper', 'BB_Lower', 'BB_Breakout',
+                      'RSI', 'MACD', 'MACD_Sig', 'GC_5_20', 'DC_5_20', 'GC_20_60', 'DC_20_60', 'MSCI_Event']
+    for col in indicator_cols:
+        if col not in df.columns:
+            df[col] = None
     
     try:
         for ma in [5, 20, 60, 120]: 
@@ -194,10 +203,6 @@ def process_single_stock(target):
         ticker, name = target['ticker'], target['stock_name']
     else:
         ticker, name = target[0], target[1]
-
-    required_cols = ['MA5', 'MA20', 'MA60', 'MA120', 'BB_Upper', 'BB_Lower', 'BB_Breakout',
-                     'RSI', 'MACD', 'MACD_Sig', 'GC_5_20', 'DC_5_20',
-                     'GC_20_60', 'DC_20_60', 'MSCI_Event']
     
     conn = _connect()
     try:
@@ -215,19 +220,21 @@ def process_single_stock(target):
 
             # 3. 신규 데이터 필터링 (s_date 이후만)
             target_start = max(datetime.strptime(s_date, "%Y%m%d"), datetime(2023, 1, 1))
-            df_to_save = df[df.index >= target_start].dropna(subset=required_cols)
+            df_to_save = df[df.index >= target_start]
             if df_to_save.empty: return f"ℹ️ {name}({ticker}): 추가할 신규 데이터 없음"
 
             data_list = []
             for date, row in df_to_save.iterrows():
                 val = (
                     date.strftime('%Y-%m-%d'), ticker, name,
-                    int(row['Open']), int(row['High']), int(row['Low']), int(row['Close']), int(row['Volume']),
-                    safe_int(row['Foreign_Net_Amt']), safe_int(row['Inst_Net_Amt']), safe_int(row['Short_Balance']),
-                    float(row['MA5']), float(row['MA20']), float(row['MA60']), float(row['MA120']),
-                    float(row['BB_Upper']), float(row['BB_Lower']), int(row['BB_Breakout']),
-                    int(row['MSCI_Event']), float(row['RSI']), float(row['MACD']), float(row['MACD_Sig']),
-                    int(row['GC_5_20']), int(row['DC_5_20']), int(row['GC_20_60']), int(row['DC_20_60'])
+                    safe_int(row.get('Open')), safe_int(row.get('High')), safe_int(row.get('Low')),
+                    safe_int(row.get('Close')), safe_int(row.get('Volume')), safe_int(row.get('Foreign_Net_Amt')),
+                    safe_int(row.get('Inst_Net_Amt')), safe_int(row.get('Short_Balance')),
+                    safe_float(row.get('MA5')), safe_float(row.get('MA20')), safe_float(row.get('MA60')),
+                    safe_float(row.get('MA120')), safe_float(row.get('BB_Upper')), safe_float(row.get('BB_Lower')),
+                    safe_int(row.get('BB_Breakout')), safe_int(row.get('MSCI_Event')), safe_float(row.get('RSI')),
+                    safe_float(row.get('MACD')), safe_float(row.get('MACD_Sig')), safe_int(row.get('GC_5_20')),
+                    safe_int(row.get('DC_5_20')), safe_int(row.get('GC_20_60')), safe_int(row.get('DC_20_60'))
                 )
                 data_list.append(val)
 
@@ -262,7 +269,6 @@ def process_single_stock(target):
 # 5. 메인 실행부 (병렬 처리 적용)
 # ==========================================
 def run_stock_crawler():
-    # KRX 로그인
     login_to_krx()
 
     targets = get_targets_from_db()
