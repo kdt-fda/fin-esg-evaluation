@@ -1,343 +1,329 @@
 from fastapi import APIRouter, HTTPException, Query
-from datetime import timedelta
-import os
-import pymysql
 import pandas as pd
-import numpy as np
 
-from services.data_joiner import StockDataJoiner  # TODO: 실제 경로에 맞게 수정 (예: from app.services...)
-
+from db.database import get_connection
 
 router = APIRouter(prefix="/predictions", tags=["predictions"])
-joiner = StockDataJoiner()
 
 
-def _connect():
-    host = os.environ.get("DB_HOST")
-    port = int(os.environ.get("DB_PORT", "3306"))
-    user = os.getenv("DB_USER")
-    password = os.getenv("DB_PASSWORD")
-    db_name = os.getenv("DB_NAME", "STOCK_DB")
-
-    return pymysql.connect(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=db_name,
-        cursorclass=pymysql.cursors.DictCursor,
-    )
+# -----------------------------
+# 공통 헬퍼
+# -----------------------------
+def _to_ymd(value) -> str:
+    if value is None:
+        return ""
+    return pd.to_datetime(value).strftime("%Y-%m-%d")
 
 
-def _get_stock_name_by_ticker(ticker: str) -> str | None:
-    conn = _connect()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT stock_name
-                FROM KOSPI200_STOCKS_TB
-                WHERE ticker = %s
-                LIMIT 1
-                """,
-                (ticker,),
-            )
-            row = cur.fetchone()
-            return row["stock_name"] if row else None
-    finally:
-        conn.close()
-
-
-# =========================
-# Chart formatting helpers
-# =========================
-def _to_mmdd(d: pd.Timestamp) -> str:
-    return f"{int(d.month)}/{int(d.day)}"
-
-
-# 프론트에서 MM/DD로 표시
-def _to_ymd(d: pd.Timestamp) -> str:
-    d = pd.to_datetime(d)
-    return d.strftime("%Y-%m-%d")
-
-
-def _to_month_label(d: pd.Timestamp) -> str:
+def _to_month_label(value) -> str:
+    if value is None:
+        return ""
+    d = pd.to_datetime(value)
     return f"{int(d.month)}월"
 
 
-# =========================
-# TODO: 나중에 XGBoost 붙일 때 교체될 부분들
-# - 여기서는 "예측값(preds)"이 없을 때도 UI가 돌게 더미 예측을 만들어줌
-# - 모델 연결하면:
-#   1) preds_short / preds_long을 만들어서 아래 builder에 주입
-#   2) reason/changeReason는 SHAP/규칙 기반 등으로 실제 근거로 교체
-# =========================
-def _dummy_future_prices_by_randomwalk(
-    base_price: float,
-    steps: int,
-    vol: float,
-    drift: float = 0.001,
-) -> list[float]:
-    """TODO: (모델 연결 후 제거/대체) 랜덤워크로 더미 예측 생성"""
-    current = base_price
-    out = []
-    for _ in range(steps):
-        shock = float(np.random.normal(0.0, vol))
-        change = drift + shock
-        current = float(round(current * (1 + change)))
-        out.append(current)
-    return out
+def _safe_float(value):
+    if value is None:
+        return None
+    return float(value)
 
 
-def _dummy_reasons(change: float) -> tuple[list[dict], str]:
-    """TODO: (모델 연결 후 제거/대체) 더미 reason/changeReason 생성"""
-    up = change >= 0
-    if up:
-        return (
-            [
-                {"factor": "모멘텀", "impact": "최근 단기 흐름 양호(더미)", "contribution": 1.0},
-                {"factor": "수급", "impact": "수급 개선 가정(더미)", "contribution": 0.5},
-            ],
-            "단기 더미 예측(모델 연결 전)",
-        )
-    return (
-        [
-            {"factor": "변동성", "impact": "단기 변동성 확대(더미)", "contribution": -0.8},
-            {"factor": "시장", "impact": "시장 조정 가정(더미)", "contribution": -0.5},
-        ],
-        "단기 더미 예측(모델 연결 전)",
-    )
-
-
-# =========================
-# Builders: df -> ChartDataPoint[]
-# - 실제 차트는 이 변환이 꼭 필요함
-# - TODO 표시된 부분만 나중에 모델 예측값/근거로 교체하면 됨
-# =========================
-def build_short_chart_points(
-    df: pd.DataFrame,
-    horizon_days: int,
-    preds: list[float] | None = None,
-    include_reasons: bool = True,
-    past_window: int | None = None,  # 과거를 최근 N개로 제한. None이면 전부 내려줌
-) -> tuple[list[dict], int]:
-    """
-    단기 차트용 데이터 생성(슬라이더용 과거 포함).
-    - 과거: (가능하면 2023~오늘) actual 전부
-      - 너무 길면 past_window로 최근 N개만 내릴 수 있음
-    - 오늘(마지막 row): actual + predicted(기준값)
-    - 미래 horizon_days: predicted (+ optional reason)
-
-    preds:
-      - TODO: XGBoost 단기 모델 예측 결과를 [horizon_days] 길이로 넣어주면 더미 생성이 필요 없음
-
-    반환:
-      (data_points, pastCount)
-      - pastCount = 예측 시작 전까지의 포인트 수(=과거 actual 개수)
-    """
-    df = df.sort_values("trade_date").copy()
-    df["trade_date"] = pd.to_datetime(df["trade_date"])
-
-    if df.empty or "close" not in df.columns:
-        return [], 0
-
-    # 과거 구간 선택
-    hist = df
-    if past_window is not None and past_window > 0:
-        hist = df.tail(past_window).copy()
-
-    hist = hist.reset_index(drop=True)
-
-    base_close = float(hist.iloc[-1]["close"])
-    base_date = pd.to_datetime(hist.iloc[-1]["trade_date"])
-
-    out: list[dict] = []
-
-    # 과거 actual 전체(또는 최근 N개)
-    for i in range(len(hist)):
-        row = hist.iloc[i]
-        out.append({"date": _to_ymd(row["trade_date"]), "actual": float(row["close"])})
-
-    past_count = len(out)
-
-    # 오늘 actual+predicted(기준)
-    if out:
-        out[-1]["predicted"] = base_close
-
-    # 미래 predicted 생성
-    if preds is None:
-        # TODO: 모델 연결 후 제거/대체 (preds를 모델에서 만들어서 주입)
-        recent = df.tail(30).copy()
-        recent["ret"] = recent["close"].pct_change()
-        vol = float(np.nan_to_num(recent["ret"].std(), nan=0.01))
-        vol = max(0.005, min(vol, 0.05))
-        preds = _dummy_future_prices_by_randomwalk(base_close, horizon_days, vol=vol, drift=0.001)
-
-    # predicted 포인트 생성
-    current_for_change = base_close
-    for k in range(1, horizon_days + 1):
-        future_date = base_date + timedelta(days=k)
-
-        predicted_price = float(preds[k - 1])
-        point = {
-            "date": _to_ymd(future_date),
-            "predicted": predicted_price,
-        }
-
-        if include_reasons:
-            # TODO: 모델 연결 후 "실제 근거"로 교체 (SHAP/룰 기반 등)
-            change = (predicted_price / current_for_change) - 1 if current_for_change else 0.0
-            reasons, change_reason = _dummy_reasons(change)
-            point["reason"] = reasons
-            point["changeReason"] = change_reason
-
-        out.append(point)
-        current_for_change = predicted_price
-
-    return out, past_count
-
-
-def build_long_chart_points(
-    df: pd.DataFrame,
-    horizon_months: int,
-    preds: list[float] | None = None,
-    include_reasons: bool = True,
-) -> list[dict]:
-    """
-    장기 차트용 데이터 생성.
-    - 월말 종가로 리샘플 후:
-      과거 6개월 actual
-      현재(기준월) actual+predicted
-      미래 horizon_months predicted (+ optional reason)
-
-    preds:
-      - TODO: XGBoost 장기 모델 예측 결과를 [horizon_months] 길이로 넣어주면 더미 생성 불필요
-    """
-    df = df.sort_values("trade_date").copy()
-    df["trade_date"] = pd.to_datetime(df["trade_date"])
-
-    if df.empty or "close" not in df.columns:
-        return []
-
-    close_series = df.set_index("trade_date")["close"].astype(float)
-    try:
-        s = close_series.resample("ME").last().dropna()
-    except ValueError:
-        s = close_series.resample("M").last().dropna()
-
-    if s.empty:
-        return []
-
-    tail = s.tail(7)  # 과거 6개월 + 현재
-    base_close = float(tail.iloc[-1])
-    base_date = tail.index[-1]
-
-    out: list[dict] = []
-
-    # 과거 actual
-    for i in range(len(tail) - 1):
-        d = tail.index[i]
-        out.append({"date": _to_month_label(d), "actual": float(tail.iloc[i])})
-
-    # 현재
-    out.append({"date": _to_month_label(base_date), "actual": base_close, "predicted": base_close})
-
-    # 미래 predicted
-    if preds is None:
-        # TODO: 모델 연결 후 제거/대체
-        current = base_close
-        preds = []
-        for _ in range(horizon_months):
-            growth = 0.02 + float(np.random.uniform(0.0, 0.02))  # 더미 성장률
-            current = float(round(current * (1 + growth)))
-            preds.append(current)
-
-    current_for_change = base_close
-    for k in range(1, horizon_months + 1):
-        future = base_date + pd.DateOffset(months=k)
-        predicted_price = float(preds[k - 1])
-
-        point = {
-            "date": _to_month_label(future),
-            "predicted": predicted_price,
-        }
-
-        if include_reasons:
-            # TODO: 모델 연결 후 실제 근거로 교체
-            point["reason"] = [
-                {"factor": "실적", "impact": "실적 개선 가정(더미)", "contribution": 2.0},
-                {"factor": "거시", "impact": "거시 안정 가정(더미)", "contribution": 1.0},
-            ]
-            point["changeReason"] = "중장기 더미 예측(모델 연결 전)"
-
-        out.append(point)
-        current_for_change = predicted_price
-
-    return out
-
-
-# =========================
-# Endpoints
-# - 프론트가 바로 쓰기 좋은 형태:
-#   { confidence: number, data: ChartDataPoint[] }
-# =========================
+# -----------------------------
+# SHORT TERM
+# 실제 종가(STOCK_TB.close) + 단기 예측(SHORT_PRED_TB) + 설명(SHORT_LLM_TB)
+# -----------------------------
 @router.get("/short")
 def predict_short(
     code: str = Query(..., description="ticker 예: 005930"),
     start_date: str | None = Query(None, description="YYYY-MM-DD"),
     end_date: str | None = Query(None, description="YYYY-MM-DD"),
-    horizon_days: int = Query(20, ge=1, le=30),  # 기본값 20일 예측
-    past_window: int | None = Query(None, description="과거를 최근 N개만 내려받고 싶으면 설정 (None=전체)"),
+    limit: int | None = Query(None, ge=1, le=1000, description="최근 N건만 조회"),
 ):
-    stock_name = _get_stock_name_by_ticker(code)
-    if not stock_name:
-        raise HTTPException(status_code=404, detail="해당 ticker의 종목을 찾을 수 없습니다.")
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            sql = """
+                SELECT
+                    s.trade_date                      AS trade_date,
+                    s.close                           AS actual_close,
+                    p.prediction                      AS predicted_value,
+                    p.shap_feature                    AS shap_feature,
+                    p.shap_value                      AS shap_value,
+                    l.interpretation                  AS interpretation
+                FROM STOCK_TB s
+                LEFT JOIN SHORT_PRED_TB p
+                    ON s.trade_date = p.trade_date
+                   AND s.ticker = p.ticker
+                LEFT JOIN SHORT_LLM_TB l
+                    ON s.trade_date = l.trade_date
+                   AND s.ticker = l.ticker
+                WHERE s.ticker = %s
+            """
+            params = [code]
 
-    df = joiner.load_full_features(stock_name, start_date=start_date, end_date=end_date)
-    if df is None or df.empty:
-        raise HTTPException(status_code=404, detail="DB에서 데이터를 찾을 수 없습니다.")
+            if start_date:
+                sql += " AND s.trade_date >= %s"
+                params.append(start_date)
 
-    # TODO: 여기서 단기 XGBoost 모델을 로드/호출해서 preds를 만들 것
-    # 예: preds_short = predictor.predict_short(df, horizon_days)
-    preds_short = None  # 모델 연결 전에는 None -> 더미 생성
+            if end_date:
+                sql += " AND s.trade_date <= %s"
+                params.append(end_date)
 
-    data, past_count = build_short_chart_points(
-        df=df,
-        horizon_days=horizon_days,
-        preds=preds_short,            # TODO: 모델 예측값으로 교체
-        include_reasons=True,         # TODO: SHAP 등 실제 근거 준비되면 True 유지, 아니면 False도 가능
-        past_window=past_window,
-    )
+            sql += " ORDER BY s.trade_date ASC"
 
-    # TODO: confidence를 모델의 성능/불확실성 기반으로 계산하거나 DB에 저장된 값을 내려주기
-    return {"confidence": 85, "pastCount": past_count, "data": data}
+            if limit is not None:
+                sql += " LIMIT %s"
+                params.append(limit)
+
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+            if not rows:
+                raise HTTPException(status_code=404, detail="단기 예측 데이터를 찾을 수 없습니다.")
+
+            data = []
+            past_count = 0
+
+            for r in rows:
+                point = {
+                    "date": _to_ymd(r["trade_date"]),
+                    "actual": _safe_float(r["actual_close"]),
+                }
+
+                # prediction이 단일값일 경우
+                if r["predicted_value"] is not None:
+                    point["predicted"] = _safe_float(r["predicted_value"])
+
+                # shap_feature / shap_value / interpretation 이 있으면 reason 구성
+                if r["shap_feature"] is not None and r["shap_value"] is not None:
+                    point["reason"] = [
+                        {
+                            "factor": str(r["shap_feature"]),
+                            "impact": r["interpretation"] or "",
+                            "contribution": _safe_float(r["shap_value"]),
+                        }
+                    ]
+
+                if r["interpretation"]:
+                    point["changeReason"] = r["interpretation"]
+
+                data.append(point)
+
+                # predicted가 아직 없는 구간은 과거(actual) 구간으로 간주
+                if r["predicted_value"] is None:
+                    past_count += 1
+
+                # -----------------------------------------
+                # [배열(JSON)로 바뀌는 경우 예시]
+                #
+                # prediction 컬럼이 예:
+                # [72000, 72100, 72300]
+                # 같은 JSON 배열이면, 위의 단일값 처리 대신
+                # "현재 row 하나"가 아니라 "미래 여러 포인트"를 펼쳐야 합니다.
+                #
+                # 예시:
+                #
+                # import json
+                # preds = r["predicted_value"]
+                # if isinstance(preds, str):
+                #     preds = json.loads(preds)
+                #
+                # for idx, pred in enumerate(preds, start=1):
+                #     future_date = pd.to_datetime(r["trade_date"]) + pd.Timedelta(days=idx)
+                #     data.append({
+                #         "date": _to_ymd(future_date),
+                #         "predicted": float(pred)
+                #     })
+                #
+                # 이 경우 현재 SQL / 로직 구조를 조금 바꾸는 게 더 깔끔합니다.
+                # -----------------------------------------
+
+            return {
+                "confidence": 0,   # 나중에 별도 컬럼/테이블 생기면 교체
+                "pastCount": past_count,
+                "data": data,
+            }
+
+    finally:
+        conn.close()
 
 
+# -----------------------------
+# LONG TERM
+# 실제 월말 종가(STOCK_TB.close) + 장기 예측(LONG_PRED_TB) + 설명(LONG_LLM_TB)
+# -----------------------------
 @router.get("/long")
 def predict_long(
     code: str = Query(..., description="ticker 예: 005930"),
     start_date: str | None = Query(None, description="YYYY-MM-DD"),
     end_date: str | None = Query(None, description="YYYY-MM-DD"),
-    horizon_months: int = Query(6, ge=1, le=24),
+    limit: int | None = Query(None, ge=1, le=60, description="최근 N개월만 조회"),
 ):
-    stock_name = _get_stock_name_by_ticker(code)
-    if not stock_name:
-        raise HTTPException(status_code=404, detail="해당 ticker의 종목을 찾을 수 없습니다.")
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            # 1) STOCK_TB에서 일별 종가를 가져온 뒤
+            # 2) 파이썬에서 월말 종가로 리샘플
+            # 3) LONG_PRED_TB / LONG_LLM_TB와 trade_date 기준 병합
+            sql_actual = """
+                SELECT
+                    trade_date,
+                    close
+                FROM STOCK_TB
+                WHERE ticker = %s
+            """
+            actual_params = [code]
 
-    df = joiner.load_full_features(stock_name, start_date=start_date, end_date=end_date)
-    if df is None or df.empty:
-        raise HTTPException(status_code=404, detail="DB에서 데이터를 찾을 수 없습니다.")
+            if start_date:
+                sql_actual += " AND trade_date >= %s"
+                actual_params.append(start_date)
 
-    # TODO: 여기서 장기 XGBoost 모델을 로드/호출해서 preds를 만들 것
-    # 예: preds_long = predictor.predict_long(df, horizon_months)
-    preds_long = None  # 모델 연결 전에는 None -> 더미 생성
+            if end_date:
+                sql_actual += " AND trade_date <= %s"
+                actual_params.append(end_date)
 
-    data = build_long_chart_points(
-        df=df,
-        horizon_months=horizon_months,
-        preds=preds_long,            # TODO: 모델 예측값으로 교체
-        include_reasons=True,        # TODO: 실제 근거 준비되면 True 유지
-    )
+            sql_actual += " ORDER BY trade_date ASC"
 
-    # TODO: confidence 산출 로직 추가
-    return {"confidence": 78, "data": data}
+            cur.execute(sql_actual, actual_params)
+            actual_rows = cur.fetchall()
+
+            if not actual_rows:
+                raise HTTPException(status_code=404, detail="장기 예측을 위한 실제 주가 데이터를 찾을 수 없습니다.")
+
+            df_actual = pd.DataFrame(actual_rows)
+            df_actual["trade_date"] = pd.to_datetime(df_actual["trade_date"])
+            df_actual["close"] = df_actual["close"].astype(float)
+
+            # 월말 종가 생성
+            s = df_actual.set_index("trade_date")["close"]
+            try:
+                monthly_actual = s.resample("ME").last().dropna()
+            except ValueError:
+                monthly_actual = s.resample("M").last().dropna()
+
+            df_monthly_actual = monthly_actual.reset_index()
+            df_monthly_actual.columns = ["trade_date", "actual"]
+
+            # 예측값/설명 조회
+            sql_pred = """
+                SELECT
+                    p.trade_date         AS trade_date,
+                    p.prediction         AS predicted_value,
+                    p.shap_feature       AS shap_feature,
+                    p.shap_value         AS shap_value,
+                    l.interpretation     AS interpretation
+                FROM LONG_PRED_TB p
+                LEFT JOIN LONG_LLM_TB l
+                    ON p.trade_date = l.trade_date
+                   AND p.ticker = l.ticker
+                WHERE p.ticker = %s
+            """
+            pred_params = [code]
+
+            if start_date:
+                sql_pred += " AND p.trade_date >= %s"
+                pred_params.append(start_date)
+
+            if end_date:
+                sql_pred += " AND p.trade_date <= %s"
+                pred_params.append(end_date)
+
+            sql_pred += " ORDER BY p.trade_date ASC"
+
+            cur.execute(sql_pred, pred_params)
+            pred_rows = cur.fetchall()
+
+            df_pred = pd.DataFrame(pred_rows)
+
+            # 예측 데이터가 아예 없더라도 actual만 먼저 보여주고 싶으면 여기서 빈 df 허용 가능
+            if df_pred.empty:
+                # 현재월 actual만 보여주는 최소 응답
+                data = [
+                    {
+                        "date": _to_month_label(r["trade_date"]),
+                        "actual": _safe_float(r["actual"]),
+                    }
+                    for _, r in df_monthly_actual.iterrows()
+                ]
+
+                if limit is not None:
+                    data = data[-limit:]
+
+                return {
+                    "confidence": 0,
+                    "data": data,
+                }
+
+            df_pred["trade_date"] = pd.to_datetime(df_pred["trade_date"])
+
+            # 월말 actual + long prediction trade_date 기준 outer merge
+            df_merged = pd.merge(
+                df_monthly_actual,
+                df_pred,
+                how="outer",
+                on="trade_date",
+            ).sort_values("trade_date")
+
+            data = []
+
+            for _, r in df_merged.iterrows():
+                point = {
+                    "date": _to_month_label(r["trade_date"]),
+                }
+
+                if pd.notna(r.get("actual")):
+                    point["actual"] = _safe_float(r["actual"])
+
+                # prediction이 단일값일 경우
+                if pd.notna(r.get("predicted_value")):
+                    point["predicted"] = _safe_float(r["predicted_value"])
+
+                if pd.notna(r.get("shap_feature")) and pd.notna(r.get("shap_value")):
+                    point["reason"] = [
+                        {
+                            "factor": str(r["shap_feature"]),
+                            "impact": r.get("interpretation") or "",
+                            "contribution": _safe_float(r["shap_value"]),
+                        }
+                    ]
+
+                if pd.notna(r.get("interpretation")) and r.get("interpretation"):
+                    point["changeReason"] = r["interpretation"]
+
+                data.append(point)
+
+                # -----------------------------------------
+                # [배열(JSON)로 바뀌는 경우 예시]
+                #
+                # LONG_PRED_TB.prediction 이 예:
+                # [0.03, 0.05, 0.08]
+                # 처럼 여러 개월 수익률/예측값 배열이면,
+                # 각 값마다 미래 월 포인트를 따로 펼쳐서 append 해야 합니다.
+                #
+                # 예시:
+                #
+                # import json
+                # preds = r["predicted_value"]
+                # if isinstance(preds, str):
+                #     preds = json.loads(preds)
+                #
+                # base_date = pd.to_datetime(r["trade_date"])
+                # for idx, pred in enumerate(preds, start=1):
+                #     future_date = base_date + pd.DateOffset(months=idx)
+                #     data.append({
+                #         "date": _to_month_label(future_date),
+                #         "predicted": float(pred)
+                #     })
+                #
+                # -----------------------------------------
+
+            if limit is not None:
+                data = data[-limit:]
+
+            return {
+                "confidence": 0,   # 나중에 별도 컬럼/테이블 생기면 교체
+                "data": data,
+            }
+
+    finally:
+        conn.close()

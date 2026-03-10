@@ -3,4 +3,11 @@ from pydantic import BaseModel
 class StockItem(BaseModel):
     code: str
     name: str
-    sector: str | None = None  # 지금은 없을 수 있으니 optional
+    sector: str | None = None
+    sector_code: str | None = None
+    is_active: bool | None = None
+
+
+class StockPricePoint(BaseModel):
+    date: str
+    actual: float | None = None

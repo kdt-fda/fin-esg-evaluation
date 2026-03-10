@@ -1,28 +1,8 @@
 from fastapi import APIRouter, Query, HTTPException
-import os
-import pymysql
-from dotenv import load_dotenv
 
-load_dotenv()
+from db.database import get_connection
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
-
-
-def _connect():
-    host = os.environ.get("DB_HOST")
-    port = int(os.environ.get("DB_PORT", "3306"))
-    user = os.getenv("DB_USER")
-    password = os.getenv("DB_PASSWORD")
-    db_name = os.getenv("DB_NAME", "STOCK_DB")
-
-    return pymysql.connect(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=db_name,
-        cursorclass=pymysql.cursors.DictCursor,
-    )
 
 
 @router.get("/")
@@ -34,7 +14,7 @@ def list_stocks(
     KOSPI200_STOCKS_TB + SECTOR_TB 조인으로 종목 리스트 반환.
     React Sidebar에서 사용하기 좋게 code/name/sector 형태로 내려줌.
     """
-    conn = _connect()
+    conn = get_connection()
     try:
         with conn.cursor() as cur:
             sql = """
@@ -59,12 +39,11 @@ def list_stocks(
             cur.execute(sql, params)
             rows = cur.fetchall()
 
-            # 프론트가 쓰기 편하게 key명 정리
             return [
                 {
                     "code": r["ticker"],
                     "name": r["stock_name"],
-                    "sector": r["sector_name"] or "미분류",  # sector가 없을 때 fallback
+                    "sector": r["sector_name"] or "미분류",
                     "sector_code": r["sector_code"],
                     "is_active": bool(r["is_active"]),
                 }
@@ -79,7 +58,7 @@ def get_stock(code: str):
     """
     단일 종목 조회 (디버깅/상세페이지용)
     """
-    conn = _connect()
+    conn = get_connection()
     try:
         with conn.cursor() as cur:
             sql = """
@@ -108,5 +87,58 @@ def get_stock(code: str):
                 "sector_code": r["sector_code"],
                 "is_active": bool(r["is_active"]),
             }
+    finally:
+        conn.close()
+
+@router.get("/{code}/prices")
+def get_stock_prices(
+    code: str,
+    start_date: str | None = Query(None, description="YYYY-MM-DD"),
+    end_date: str | None = Query(None, description="YYYY-MM-DD"),
+    limit: int | None = Query(None, ge=1, le=5000, description="가져올 최대 건수"),
+):
+    """
+    특정 종목의 과거/현재 종가 조회
+    그래프의 actual 데이터로 사용
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            sql = """
+                SELECT
+                    trade_date,
+                    close
+                FROM STOCK_TB
+                WHERE ticker = %s
+            """
+            params = [code]
+
+            if start_date:
+                sql += " AND trade_date >= %s"
+                params.append(start_date)
+
+            if end_date:
+                sql += " AND trade_date <= %s"
+                params.append(end_date)
+
+            sql += " ORDER BY trade_date ASC"
+
+            if limit is not None:
+                sql += " LIMIT %s"
+                params.append(limit)
+
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+            if not rows:
+                raise HTTPException(status_code=404, detail="Price data not found")
+
+            return [
+                {
+                    "date": r["trade_date"].strftime("%Y-%m-%d") if r["trade_date"] else None,
+                     "actual": float(r["close"]) if r["close"] is not None else None,
+                }
+                for r in rows
+            ]
     finally:
         conn.close()

@@ -16,3 +16,4 @@ class ChartDataPoint(BaseModel):
 class PredictionResponse(BaseModel):
     confidence: int
     data: List[ChartDataPoint]
+    pastCount: Optional[int] = None
