@@ -25,7 +25,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.FileHandler("update_log.log", encoding='utf-8'),
+        logging.FileHandler("logs/update_log.log", encoding='utf-8'),
         logging.StreamHandler()
     ]
 )

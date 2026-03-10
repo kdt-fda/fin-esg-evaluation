@@ -211,3 +211,4 @@ logs/
 **/__pycache__/
 model_cache/
 docs_cache/
+.vscode
