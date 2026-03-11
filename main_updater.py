@@ -21,20 +21,29 @@ from crawler.step1_base_updater import run_step1_pipeline
 from crawler.step2_market_data_updater import run_step2_pipeline
 from crawler.step3_indicator_calculator import run_step3_pipeline
 
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+class OnlyMyCodeFilter(logging.Filter):
+    def filter(self, record):
+        if record.pathname.startswith(PROJECT_ROOT):
+            if "site-packages" not in record.pathname:
+                return True
+        return False
+    
+file_handler = logging.FileHandler("logs/update_log.log", encoding='utf-8')
+stream_handler = logging.StreamHandler()
+
+my_filter = OnlyMyCodeFilter()
+file_handler.addFilter(my_filter)
+stream_handler.addFilter(my_filter)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler("logs/update_log.log", encoding='utf-8'),
-        logging.StreamHandler()
-    ]
+    handlers=[file_handler, stream_handler],
+    force=True
 )
 
-logging.getLogger("pykrx").setLevel(logging.CRITICAL)
-logging.getLogger("huggingface_hub").setLevel(logging.CRITICAL)
-logging.getLogger("transformers").setLevel(logging.CRITICAL)
-logging.getLogger("urllib3").setLevel(logging.CRITICAL)
-logging.getLogger("filelock").setLevel(logging.CRITICAL)
 os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
 
 def run_total_update_process():
