@@ -6,6 +6,8 @@ from pykrx.website.comm import webio
 from datetime import datetime
 import time
 from dotenv import load_dotenv
+from urllib3.util.retry import Retry
+from requests.adapters import HTTPAdapter
 
 load_dotenv()
 
@@ -13,9 +15,37 @@ load_dotenv()
 # 세션 패치 (전역 설정)
 # ==========================================
 _session = requests.Session()
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
-webio.Post.read = lambda self, **params: _session.post(self.url, headers=self.headers, data=params, timeout=15)
-webio.Get.read = lambda self, **params: _session.get(self.url, headers=self.headers, params=params, timeout=15)
+_session.headers.update({
+    "User-Agent": _UA,
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Referer": "http://data.krx.co.kr/"
+})
+
+retry_strategy = Retry(
+    total=5,
+    backoff_factor=1,
+    status_forcelist=[403, 429, 500, 502, 503, 504]
+)
+adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=retry_strategy)
+_session.mount('http://', adapter)
+_session.mount('https://', adapter)
+
+def _safe_post(self, **params):
+    headers = getattr(self, 'headers', {}).copy() if getattr(self, 'headers', None) else {}
+    headers['User-Agent'] = _UA
+    headers['Referer'] = "http://data.krx.co.kr/"
+    return _session.post(self.url, headers=headers, data=params, timeout=30)
+
+def _safe_get(self, **params):
+    headers = getattr(self, 'headers', {}).copy() if getattr(self, 'headers', None) else {}
+    headers['User-Agent'] = _UA
+    headers['Referer'] = "http://data.krx.co.kr/"
+    return _session.get(self.url, headers=headers, params=params, timeout=30)
+
+webio.Post.read = _safe_post
+webio.Get.read = _safe_get
 
 def _connect():
     host = os.environ.get('DB_HOST')
@@ -40,11 +70,10 @@ def login_to_krx():
     KRX_PW = os.getenv("KRX_PW")
     _LOGIN_PAGE = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001.cmd"
     _LOGIN_URL = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001D1.cmd"
-    _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36..."
-
-    _session.get(_LOGIN_PAGE, headers={"User-Agent": _UA})
+    
+    _session.get(_LOGIN_PAGE)
     payload = {"mbrId": KRX_ID, "pw": KRX_PW}
-    resp = _session.post(_LOGIN_URL, data=payload, headers={"User-Agent": _UA, "Referer": _LOGIN_PAGE})
+    resp = _session.post(_LOGIN_URL, data=payload)
     
     if resp.json().get("_error_code") in ["CD001", "CD011"]:
         return True
