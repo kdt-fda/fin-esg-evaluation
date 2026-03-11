@@ -7,15 +7,12 @@ from database.kospi200_stocks_tb_updater import update_kospi200_stocks_table
 def is_business_day():
     """오늘이 개장일인지 확인"""
     try:
-        now = datetime.now()
-        b_days = stock.get_business_days(now.year, now.month)
-
-        today_str = now.strftime("%Y-%m-%d")
-        b_days_str = [day.strftime("%Y-%m-%d") for day in b_days]
+        today_str = datetime.now().strftime("%Y%m%d")
         
-        if today_str in b_days_str:
-            return True
-        return False
+        df = stock.get_market_ohlcv(today_str, today_str, "005930")
+        if df is None or df.empty:
+            return False
+        return True
         
     except Exception as e:
         logging.warning(f'개장일 확인 중 에러 발생 (서버 응답 불안정): {e}')
