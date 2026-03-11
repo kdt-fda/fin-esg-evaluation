@@ -102,6 +102,21 @@ export default function App() {
     return latestActual?.actual ?? 0;
   }, [shortTermData]);
 
+  /* ===== [ADD START] LongTermChart 연동용 fallback 처리 ===== */
+  // long prediction API가 아직 없거나 데이터가 비어 있어도
+  // LongTermChart 내부 mock 데이터가 동작하도록 최소값만 넘겨줍니다.
+  // confidence는 API 값이 있으면 사용하고, 없으면 0을 넘겨 내부 mock UI를 그대로 쓰게 합니다.
+  const resolvedLongConfidence = useMemo(() => {
+    return longConfidence > 0 ? longConfidence : 0;
+  }, [longConfidence]);
+
+  // API에서 longTermData가 오면 전달하고,
+  // 없으면 undefined를 넘겨 LongTermChart 내부 mock 데이터가 사용되도록 합니다.
+  const resolvedLongTermData = useMemo(() => {
+    return longTermData.length > 0 ? longTermData : undefined;
+  }, [longTermData]);
+  /* ===== [ADD END] LongTermChart 연동용 fallback 처리 ===== */
+
   useEffect(() => {
     const controller = new AbortController();
 
@@ -310,10 +325,14 @@ export default function App() {
             />
 
             <LongTermChart
+              title = "중장기 투자 매력도 랭킹"
               stockName={selectedStock?.name ?? '-'}
               stockCode={selectedStock?.code ?? '-'}
               basePrice={basePrice}
-              confidence={longConfidence}
+              confidence={resolvedLongConfidence}
+              /* ===== [ADD START] API 없으면 LongTermChart 내부 mock 사용 ===== */
+              data={resolvedLongTermData}
+              /* ===== [ADD END] API 없으면 LongTermChart 내부 mock 사용 ===== */
             />
           </div>
 
