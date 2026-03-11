@@ -1,6 +1,7 @@
 import pymysql
 import os
 import requests
+import random
 from pykrx import stock
 from pykrx.website.comm import webio
 from datetime import datetime
@@ -33,15 +34,27 @@ _session.mount('http://', adapter)
 _session.mount('https://', adapter)
 
 def _safe_post(self, **params):
-    headers = getattr(self, 'headers', {}).copy() if getattr(self, 'headers', None) else {}
-    headers['User-Agent'] = _UA
-    headers['Referer'] = "http://data.krx.co.kr/"
+    headers = {
+        "User-Agent": _UA,
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Origin": "http://data.krx.co.kr",
+        "Referer": "http://data.krx.co.kr/contents/MDC/MDI/mdc0601000000.cmd",
+        "X-Requested-With": "XMLHttpRequest",
+        "X-Forwarded-For": f"211.{random.randint(100, 250)}.{random.randint(1, 250)}.{random.randint(1, 250)}"
+    }
     return _session.post(self.url, headers=headers, data=params, timeout=30)
 
 def _safe_get(self, **params):
-    headers = getattr(self, 'headers', {}).copy() if getattr(self, 'headers', None) else {}
-    headers['User-Agent'] = _UA
-    headers['Referer'] = "http://data.krx.co.kr/"
+    headers = {
+        "User-Agent": _UA,
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "http://data.krx.co.kr/contents/MDC/MDI/mdc0601000000.cmd",
+        "X-Forwarded-For": f"211.{random.randint(100, 250)}.{random.randint(1, 250)}.{random.randint(1, 250)}"
+    }
     return _session.get(self.url, headers=headers, params=params, timeout=30)
 
 webio.Post.read = _safe_post
@@ -111,18 +124,18 @@ def update_kospi200_stocks_table():
                     if tickers and len(tickers) > 0:
                         break
                     else:
-                        print(f"{eng_code} 섹터 0건 수집. 1초 대기 후 재시도...")
-                        time.sleep(1)
+                        print(f"{eng_code} 섹터 0건 수집. 재시도...")
+                        time.sleep(0.1)
                 except Exception as e:
-                    print(f"{eng_code} 섹터 수집 에러. 1초 대기 후 재시도... ({attempt+1}/3)")
-                    time.sleep(1)
+                    print(f"{eng_code} 섹터 수집 에러. 재시도... ({attempt+1}/3)")
+                    time.sleep(0.1)
 
             for ticker in tickers:
                 stock_name = ticker_name_map.get(ticker, "Unknown")
                 data.append((ticker, stock_name, eng_code, True))
 
             print(f"✅ {eng_code} 섹터 수집 완료 ({len(tickers)} 종목)")
-            time.sleep(1)
+            time.sleep(0.1)
 
         if data:
             conn = _connect()
