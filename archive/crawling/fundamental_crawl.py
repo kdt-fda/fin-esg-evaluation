@@ -546,4 +546,3 @@ run_batches(
     chunk_size=20,
     include_prev_year=True
 )
-

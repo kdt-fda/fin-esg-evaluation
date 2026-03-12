@@ -1,0 +1,23 @@
+# 가상환경 및 로컬 파이썬 설정
+.venv
+venv
+.env
+.python-version
+
+# 파이썬 캐시 (모든 하위 폴더 포함)
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Git 기록
+.git
+.gitignore
+
+# 프로젝트 로그 및 모델 캐시 (Docker 외부 볼륨으로 관리할 항목)
+update_log.log
+model_cache/
+docs_cache/
+
+# 기타 에디터 설정
+.vscode/
+.idea/

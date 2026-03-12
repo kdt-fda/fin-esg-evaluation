@@ -36,7 +36,7 @@ def _connect():
 FINAL_CUT_START = "2023-01-01"
 
 # ==========================================
-# 2. 수집 유틸리티 (팀원 로직 원본 유지)
+# 2. 수집 유틸리티
 # ==========================================
 def _get_json(url):
     r = requests.get(url, timeout=30); r.raise_for_status()
@@ -63,17 +63,17 @@ def fetch_fred_series(series_id, colname, start_date):
     return df[["date", colname]]
 
 # ==========================================
-# 3. 메인 실행 파이프라인 (병합 및 전처리 통합)
+# 3. 메인 실행 파이프라인
 # ==========================================
 def run_macro_collector(is_initial=False):
-    # 1. 수집 기간 설정
+    # 수집 기간 설정
     if is_initial:
         s_d, s_m, s_q, s_fred = "20220101", "202201", "2021Q1", "2022-01-01"
         trade_s_m = "202101"
     else:
-        lookback = (datetime.now() - timedelta(days=60))
+        lookback = (datetime.now() - timedelta(days=90))
         s_d, s_m, s_fred = lookback.strftime("%Y%m%d"), lookback.strftime("%Y%m"), lookback.strftime("%Y-%m-%d")
-        s_q = (datetime.now() - timedelta(days=200)).strftime("%YQ1")
+        s_q = (datetime.now() - timedelta(days=365)).strftime("%YQ1")
         trade_s_m = (datetime.now() - timedelta(days=500)).strftime("%Y%m")
 
     e_d = datetime.now().strftime("%Y%m%d")
@@ -82,7 +82,7 @@ def run_macro_collector(is_initial=False):
 
     dfs = {}
 
-    # 2. 데이터 수집 (ECOS)
+    # 데이터 수집 (ECOS)
     daily_vars = [("ktb3y", "817Y002", "010200000"), ("ktb10y", "817Y002", "010210000"), 
                   ("usdkrw", "731Y003", "0000003"), ("base_rate", "722Y001", "0101000")]
     for name, stat, item in daily_vars:
@@ -95,62 +95,68 @@ def run_macro_collector(is_initial=False):
         dfs[name] = ecos_fetch(stat, item, "M", s_m, e_m, name)
 
     # 수출입 YoY
-    ex_raw = ecos_fetch("901Y119", "T002", "M", trade_s_m, e_m, "export_total")
-    if not ex_raw.empty:
-        ex_df = ex_raw.groupby("date")["export_total"].sum().reset_index()
-        ex_df["export_yoy"] = ex_df["export_total"].pct_change(12) * 100
-        dfs["export"] = ex_df
-
-    im_raw = ecos_fetch("901Y119", "T004", "M", trade_s_m, e_m, "import_total")
-    if not im_raw.empty:
-        im_df = im_raw.groupby("date")["import_total"].sum().reset_index()
-        im_df["import_yoy"] = im_df["import_total"].pct_change(12) * 100
-        dfs["import"] = im_df
+    for mode, stat_code in [("export", "T002"), ("import", "T004")]:
+        raw = ecos_fetch("901Y119", stat_code, "M", trade_s_m, e_m, f"{mode}_total")
+        if not raw.empty:
+            df_trade = raw.groupby("date")[f"{mode}_total"].sum().reset_index().sort_values("date")
+            df_trade[f"{mode}_yoy"] = df_trade[f"{mode}_total"].pct_change(12) * 100
+            dfs[mode] = df_trade[["date", f"{mode}_total", f"{mode}_yoy"]]
 
     # GDP QoQ
     gdp_df = ecos_fetch("200Y108", "10601", "Q", s_q, e_q, "gdp_level")
     if not gdp_df.empty:
         gdp_df["gdp_qoq"] = (gdp_df["gdp_level"] / gdp_df["gdp_level"].shift(1) - 1) * 100
-        dfs["gdp"] = gdp_df
+        dfs["gdp"] = gdp_df[["date", "gdp_level", "gdp_qoq"]]
 
-    # 3. 데이터 수집 (FRED)
-    fred_vars = {"us_cpi": "CPIAUCSL", "us_core_cpi": "CPILFESL", "us_core_pce": "PCEPILFE", "us_unrate": "UNRATE", "us_init_claims": "ICSA", "us_policy_rate": "EFFR", "us_ust_3y": "DGS3", "us_ust_10y": "DGS10", "jpy3": "IR3TIB01JPM156N", "jpy10": "IRLTLT01JPM156N", "pmi": "IPMAN"}
+    # FRED 데이터
+    fred_vars = {"us_cpi": "CPIAUCSL", "us_core_cpi": "CPILFESL", "us_core_pce": "PCEPILFE",
+                 "us_unrate": "UNRATE", "us_init_claims": "ICSA", "us_policy_rate": "EFFR",
+                 "us_ust_3y": "DGS3", "us_ust_10y": "DGS10", "jpy3": "IR3TIB01JPM156N",
+                 "jpy10": "IRLTLT01JPM156N", "pmi": "IPMAN"}
     for col, sid in fred_vars.items():
         dfs[col] = fetch_fred_series(sid, col, s_fred)
 
-    # 4. 통합 및 전처리 (핵심 수정 부분)
-    # 🎯 [1단계] 수출입 YoY를 "월간 원본"에서 미리 계산 (ffill 하기 전에!)
-    if "export" in dfs and not dfs["export"].empty:
-        df_ex = dfs["export"].sort_values("date")
-        # 월간 데이터이므로 pct_change(12)가 정확히 작년 이달과 비교함
-        df_ex["export_yoy"] = df_ex["export_total"].pct_change(12) * 100
-        dfs["export"] = df_ex[["date", "export_yoy"]] # yoy만 남김
+    # 통합 및 결측치 방어
+    valid_dfs = [v for v in dfs.values() if v is not None and not v.empty]
+    if not valid_dfs:
+        print("❌ 수집된 데이터가 하나도 없습니다.")
+        return
+    
+    # 기준 날짜축 생성 (FINAL_CUT_START ~ 오늘)
+    date_spine = pd.date_range(start=FINAL_CUT_START, end=datetime.now(), freq='D')
+    merged = pd.DataFrame({'date': date_spine})
 
-    if "import" in dfs and not dfs["import"].empty:
-        df_im = dfs["import"].sort_values("date")
-        df_im["import_yoy"] = df_im["import_total"].pct_change(12) * 100
-        dfs["import"] = df_im[["date", "import_yoy"]] # yoy만 남김
-
-    # 🎯 [2단계] 모든 데이터 병합
-    valid_dfs = [v for k, v in dfs.items() if v is not None and not v.empty]
-    merged = valid_dfs[0]
-    for d in valid_dfs[1:]:
-        merged = pd.merge(merged, d, on="date", how="outer")
+    # 순차 병합
+    for d in valid_dfs:
+        d['date'] = pd.to_datetime(d['date']).dt.normalize()
+        d = d.drop_duplicates('date')
+        merged = pd.merge(merged, d, on="date", how="left")
 
     merged = merged.sort_values("date")
 
-    # 🎯 [3단계] 병합된 "계산 완료된 YoY"를 오늘 날짜까지 ffill
+    # 지표별 최신 공시 현황 리포트 및 ffill
+    print("\n--- [지표별 최신 데이터 현황] ---")
     all_cols = [c for c in merged.columns if c != 'date']
-    # 여기서 ffill을 하면 이미 숫자가 채워진 YoY 값이 2월까지 복사됩니다!
+    for col in all_cols:
+        last_date = merged[merged[col].notnull()]['date'].max()
+        if pd.isna(last_date):
+            print(f"⚠️ {col:20}: 데이터 없음")
+        else:
+            delay = (datetime.now() - last_date).days
+            status = "✅ 정상" if delay < 40 else "⏳ 발표지연"
+            print(f"{status} {col:20}: {last_date.strftime('%Y-%m-%d')} ({delay}일전)")
+
+    # 결측치 처리
     merged[all_cols] = merged[all_cols].ffill().bfill()
 
-    # 🎯 [4단계] 나머지 파생 변수 계산
+    # 파생 변수 계산
     merged["rate_diff_policy"] = merged["us_policy_rate"] - merged["base_rate"]
     merged["rate_diff_3y"] = merged["us_ust_3y"] - merged["ktb3y"]
     merged["rate_diff_10y"] = merged["us_ust_10y"] - merged["ktb10y"]
 
-    # 5. 분석 시작 시점 이후 필터링
+    # 최종 필터링 및 컬럼명 통일
     merged = merged[merged["date"] >= FINAL_CUT_START].reset_index(drop=True)
+    merged = merged.rename(columns={'date': 'trade_date'})
 
     # DB 적재
     if not merged.empty:
@@ -161,20 +167,37 @@ def run_macro_collector(is_initial=False):
 # ==========================================
 def send_to_macro_db(df):
     conn = _connect()
-    
     try:
         cur = conn.cursor()
-        df = df.replace({np.nan: None})
+
+        # 컬럼 순서 확인
+        cur.execute("DESCRIBE MACROECONOMICS_TB")
+        db_cols = [row[0] for row in cur.fetchall()]
+
+        for col in db_cols:
+            if col not in df.columns:
+                df[col] = None
+
+        df_db = df[db_cols]
+        df_db = df_db.where(pd.notnull(df_db), None)
         
-        cols = ["trade_date"] + [c for c in df.columns if c != 'date']
-        placeholders = ", ".join(["%s"] * len(cols))
-        update_stmt = ", ".join([f"{c}=VALUES({c})" for c in cols[1:]])
-        
-        sql = f"INSERT INTO MACROECONOMICS_TB ({', '.join(cols)}) VALUES ({placeholders}) ON DUPLICATE KEY UPDATE {update_stmt};"
-        cur.executemany(sql, [tuple(row) for row in df.values])
+        placeholders = ", ".join(["%s"] * len(db_cols))
+        update_stmt = ", ".join([f"{c}=VALUES({c})" for c in db_cols if c != 'trade_date'])
+
+        sql = f"""
+            INSERT INTO MACROECONOMICS_TB ({', '.join(db_cols)}) 
+            VALUES ({placeholders}) 
+            ON DUPLICATE KEY UPDATE {update_stmt};
+        """
+
+        cur.executemany(sql, [tuple(row) for row in df_db.values])
         conn.commit()
-        print(f"✅ 거시경제 지표 통합 적재 완료 (총 {len(df)}행)")
-    finally: conn.close()
+        print(f"✅ MACROECONOMICS_TB 적재 완료 {len(df_db)}행 (최신일: {df_db['trade_date'].max()})")
+    except Exception as e:
+        print(f"❌ DB 적재 에러: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     run_macro_collector(is_initial=False)

@@ -1,16 +1,81 @@
-import pymysql
 import os
+import requests
+import pymysql
 import pandas as pd
 import pandas_ta as ta
 from pykrx import stock
 from datetime import datetime, timedelta
-import time
 import calendar
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
+from pykrx.website.comm import webio
+from urllib3.util.retry import Retry
+from requests.adapters import HTTPAdapter
 
 # .env 파일 로드
 load_dotenv()
+
+# ==========================================
+# 0. 전역 세션 패치
+# ==========================================
+_session = requests.Session()
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+
+_session.headers.update({
+    "User-Agent": _UA,
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Referer": "http://data.krx.co.kr/"
+})
+
+retry_strategy = Retry(
+    total=5,
+    backoff_factor=1,
+    status_forcelist=[403, 429, 500, 502, 503, 504]
+)
+adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=retry_strategy)
+_session.mount('http://', adapter)
+_session.mount('https://', adapter)
+
+def _safe_post(self, **params):
+    headers = getattr(self, 'headers', {}).copy() if getattr(self, 'headers', None) else {}
+    headers['User-Agent'] = _UA
+    headers['Referer'] = "http://data.krx.co.kr/"
+    return _session.post(self.url, headers=headers, data=params, timeout=30)
+
+def _safe_get(self, **params):
+    headers = getattr(self, 'headers', {}).copy() if getattr(self, 'headers', None) else {}
+    headers['User-Agent'] = _UA
+    headers['Referer'] = "http://data.krx.co.kr/"
+    return _session.get(self.url, headers=headers, params=params, timeout=30)
+
+webio.Post.read = _safe_post
+webio.Get.read = _safe_get
+
+def login_to_krx():
+    """KRX 데이터 포털 로그인 로직 (세션 획득용)"""
+    KRX_ID = os.getenv("KRX_ID")
+    KRX_PW = os.getenv("KRX_PW")
+    
+    if not KRX_ID or not KRX_PW:
+        print("⚠️ KRX 계정 정보가 .env에 없습니다. 익명 세션으로 진행합니다.")
+        return False
+
+    _LOGIN_PAGE = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001.cmd"
+    _LOGIN_JSP  = "https://data.krx.co.kr/contents/MDC/COMS/client/view/login.jsp?site=mdc"
+    _LOGIN_URL = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001D1.cmd"
+
+    try:
+        _session.get(_LOGIN_PAGE)
+        _session.get(_LOGIN_JSP)
+        payload = {"mbrId": KRX_ID, "pw": KRX_PW}
+        resp = _session.post(_LOGIN_URL, data=payload)
+        
+        if resp.json().get("_error_code") in ["CD001", "CD011"]:
+            print("✅ KRX 로그인 성공 및 세션 유지 중")
+            return True
+        return False
+    except:
+        return False
 
 # ==========================================
 # 1. DB 연결 설정
@@ -33,6 +98,16 @@ def _connect():
     )
     return conn
 
+def safe_int(val):
+    if pd.isna(val) or val is None or val == '': return None
+    try: return int(float(val))
+    except: return None
+
+def safe_float(val):
+    if pd.isna(val) or val is None or val == '': return None
+    try: return float(val)
+    except: return None
+
 def clean_ticker(x):
     x = str(x).strip()
     if x.lower() == 'nan' or x == '': return ''
@@ -53,23 +128,20 @@ def get_last_update_date(ticker, cur):
     cur.execute(sql, (ticker,))
     result = cur.fetchone()
 
-    # 결과가 딕셔너리 형태일 때 (이름으로 접근)
     if isinstance(result, dict) and result.get('last_date'):
-        return (result['last_date'] + timedelta(days=1)).strftime("%Y%m%d")
-    # 결과가 튜플 형태일 때 (인덱스로 접근)
+        return result['last_date'].strftime("%Y%m%d")
     elif isinstance(result, (tuple, list)) and result[0]:
-        return (result[0] + timedelta(days=1)).strftime("%Y%m%d")
+        return result[0].strftime("%Y%m%d")
     
     return "20220601"
 
 # ==========================================
-# 2. 데이터 수집 (시작일 2022-06-01 고정)
+# 2. 데이터 수집
 # ==========================================
 def fetch_all_data(ticker, s_date):
     ticker = clean_ticker(ticker)
     e_date = datetime.now().strftime("%Y%m%d")
     
-    # 지표 계산(MA120 등)을 위해 수집 시작일보다 200일 전 데이터부터 실제로 가져옴
     fetch_start = (datetime.strptime(s_date, "%Y%m%d") - timedelta(days=200)).strftime("%Y%m%d")
     
     try:
@@ -78,24 +150,29 @@ def fetch_all_data(ticker, s_date):
         if df_price.empty: return pd.DataFrame()
         
         # 2) 수급 정보
-        df_inv = stock.get_market_trading_value_by_date(fetch_start, e_date, ticker)
-        df_inv = df_inv.rename(columns={'외국인합계':'Foreign_Net_Amt', '기관합계':'Inst_Net_Amt'})
-        
-        # 3) 공매도 정보
+        df_inv = pd.DataFrame(index=df_price.index, columns=['Foreign_Net_Amt', 'Inst_Net_Amt'])
         try:
-            df_short = stock.get_shorting_balance_by_date(fetch_start, e_date, ticker)
-            found_col = next((c for c in ['공매도잔고금액', '공매도금액', '잔고금액'] if c in df_short.columns), None)
-            if found_col:
-                df_short_val = df_short[[found_col]].rename(columns={found_col: 'Short_Balance'})
-            else:
-                df_short_val = pd.DataFrame(index=df_price.index); df_short_val['Short_Balance'] = 0
-        except:
-            df_short_val = pd.DataFrame(index=df_price.index); df_short_val['Short_Balance'] = 0
+            temp_inv = stock.get_market_trading_value_by_date(fetch_start, e_date, ticker)
+            if not temp_inv.empty and '외국인합계' in temp_inv.columns:
+                df_inv['Foreign_Net_Amt'] = temp_inv['외국인합계']
+                df_inv['Inst_Net_Amt'] = temp_inv['기관합계']
+        except: pass
 
-        df_merged = df_price.join(df_inv[['Foreign_Net_Amt', 'Inst_Net_Amt']], how='left')
-        df_merged = df_merged.join(df_short_val, how='left')
-            
-        return df_merged.fillna(0)
+        # 3) 공매도 정보
+        df_short = pd.DataFrame(index=df_price.index, columns=['Short_Balance'])
+        try:
+            df_short_raw = stock.get_shorting_balance_by_date(fetch_start, e_date, ticker)
+            if not df_short_raw.empty:
+                target_cols = ['공매도금액', '공매도잔고금액', '잔고금액']
+                found_col = next((c for c in target_cols if c in df_short_raw.columns), None)
+
+                if found_col:
+                    df_short['Short_Balance'] = df_short_raw[found_col].reindex(df_price.index, method='nearest')
+        except: pass
+
+        df_merged = df_price.join(df_inv, how='left').join(df_short, how='left')
+        return df_merged
+    
     except Exception as e:
         print(f"⚠️ 수집 에러 ({ticker}): {e}")
         return pd.DataFrame()
@@ -106,8 +183,12 @@ def fetch_all_data(ticker, s_date):
 def calculate_indicators(df):
     rename = {'시가':'Open', '고가':'High', '저가':'Low', '종가':'Close', '거래량':'Volume'}
     df = df.rename(columns=rename)
-    
-    if len(df) < 120: return df
+
+    indicator_cols = ['MA5', 'MA20', 'MA60', 'MA120', 'BB_Upper', 'BB_Lower', 'BB_Breakout',
+                      'RSI', 'MACD', 'MACD_Sig', 'GC_5_20', 'DC_5_20', 'GC_20_60', 'DC_20_60', 'MSCI_Event']
+    for col in indicator_cols:
+        if col not in df.columns:
+            df[col] = None
     
     try:
         for ma in [5, 20, 60, 120]: 
@@ -120,6 +201,9 @@ def calculate_indicators(df):
             
         df['GC_5_20'] = ((df['MA5'].shift(1) < df['MA20'].shift(1)) & (df['MA5'] > df['MA20'])).astype(int)
         df['DC_5_20'] = ((df['MA5'].shift(1) > df['MA20'].shift(1)) & (df['MA5'] < df['MA20'])).astype(int)
+
+        df['GC_20_60'] = ((df['MA20'].shift(1) < df['MA60'].shift(1)) & (df['MA20'] > df['MA60'])).astype(int)
+        df['DC_20_60'] = ((df['MA20'].shift(1) > df['MA60'].shift(1)) & (df['MA20'] < df['MA60'])).astype(int)
         
         df['RSI'] = ta.rsi(df['Close'], length=14)
         macd = ta.macd(df['Close'])
@@ -138,7 +222,7 @@ def calculate_indicators(df):
         df['MSCI_Event'] = df.index.strftime('%Y-%m-%d').isin(msci_dates).astype(int)
         
     except: pass
-    return df.fillna(0)
+    return df
 
 # ==========================================
 # 4. 개별 종목 처리 함수 (병렬용)
@@ -148,8 +232,6 @@ def process_single_stock(target):
         ticker, name = target['ticker'], target['stock_name']
     else:
         ticker, name = target[0], target[1]
-
-    required_cols = ['MA5', 'MA20', 'MA60', 'MA120', 'BB_Upper', 'BB_Lower', 'BB_Breakout', 'RSI', 'MACD', 'MACD_Sig', 'GC_5_20', 'DC_5_20', 'MSCI_Event']
     
     conn = _connect()
     try:
@@ -166,19 +248,22 @@ def process_single_stock(target):
             df = calculate_indicators(df)
 
             # 3. 신규 데이터 필터링 (s_date 이후만)
-            df_to_save = df[df.index >= datetime.strptime(s_date, "%Y%m%d")].dropna(subset=required_cols)
+            target_start = max(datetime.strptime(s_date, "%Y%m%d"), datetime(2023, 1, 1))
+            df_to_save = df[df.index >= target_start]
             if df_to_save.empty: return f"ℹ️ {name}({ticker}): 추가할 신규 데이터 없음"
 
             data_list = []
             for date, row in df_to_save.iterrows():
                 val = (
                     date.strftime('%Y-%m-%d'), ticker, name,
-                    int(row['Open']), int(row['High']), int(row['Low']), int(row['Close']), int(row['Volume']),
-                    int(row['Foreign_Net_Amt']), int(row['Inst_Net_Amt']), int(row['Short_Balance']),
-                    float(row['MA5']), float(row['MA20']), float(row['MA60']), float(row['MA120']),
-                    float(row['BB_Upper']), float(row['BB_Lower']), int(row['BB_Breakout']),
-                    int(row['MSCI_Event']), float(row['RSI']), float(row['MACD']), float(row['MACD_Sig']),
-                    int(row['GC_5_20']), int(row['DC_5_20']), 0, 0
+                    safe_int(row.get('Open')), safe_int(row.get('High')), safe_int(row.get('Low')),
+                    safe_int(row.get('Close')), safe_int(row.get('Volume')), safe_int(row.get('Foreign_Net_Amt')),
+                    safe_int(row.get('Inst_Net_Amt')), safe_int(row.get('Short_Balance')),
+                    safe_float(row.get('MA5')), safe_float(row.get('MA20')), safe_float(row.get('MA60')),
+                    safe_float(row.get('MA120')), safe_float(row.get('BB_Upper')), safe_float(row.get('BB_Lower')),
+                    safe_int(row.get('BB_Breakout')), safe_int(row.get('MSCI_Event')), safe_float(row.get('RSI')),
+                    safe_float(row.get('MACD')), safe_float(row.get('MACD_Sig')), safe_int(row.get('GC_5_20')),
+                    safe_int(row.get('DC_5_20')), safe_int(row.get('GC_20_60')), safe_int(row.get('DC_20_60'))
                 )
                 data_list.append(val)
 
@@ -190,8 +275,15 @@ def process_single_stock(target):
                                     golden_cross_20_60, death_cross_20_60)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE 
+                    open=VALUES(open), high=VALUES(high), low=VALUES(low),
                     close=VALUES(close), volume=VALUES(volume), short_balance=VALUES(short_balance),
-                    foreign_net_amt=VALUES(foreign_net_amt), inst_net_amt=VALUES(inst_net_amt);
+                    foreign_net_amt=VALUES(foreign_net_amt), inst_net_amt=VALUES(inst_net_amt),
+                    ma5=VALUES(ma5), ma20=VALUES(ma20), ma60=VALUES(ma60), ma120=VALUES(ma120),
+                    bb_upper=VALUES(bb_upper), bb_lower=VALUES(bb_lower), bb_breakout=VALUES(bb_breakout),
+                    rsi=VALUES(rsi), macd=VALUES(macd), macd_signal=VALUES(macd_signal),
+                    msci_event=VALUES(msci_event), golden_cross_5_20=VALUES(golden_cross_5_20),
+                    death_cross_5_20=VALUES(death_cross_5_20), golden_cross_20_60=VALUES(golden_cross_20_60),
+                    death_cross_20_60=VALUES(death_cross_20_60);
             """
             cur.executemany(sql, data_list)
             conn.commit()
@@ -206,12 +298,13 @@ def process_single_stock(target):
 # 5. 메인 실행부 (병렬 처리 적용)
 # ==========================================
 def run_stock_crawler():
+    login_to_krx()
+
     targets = get_targets_from_db()
     if not targets: return
     
-    print(f"🚀 {len(targets)}개 종목 병렬 증분 수집 시작 (Thread: 6)")
+    print(f"🚀 {len(targets)}개 종목 수집 시작 (Thread: 6)")
     
-    # 🎯 ThreadPoolExecutor를 사용한 병렬 처리
     with ThreadPoolExecutor(max_workers=6) as executor:
         results = list(executor.map(process_single_stock, targets))
     

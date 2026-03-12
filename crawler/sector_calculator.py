@@ -47,6 +47,17 @@ def get_tickers_by_sector(sector_code):
     finally:
         conn.close()
 
+def get_kospi200_from_db():
+    print("📡 COMMON_TB에서 코스피 200 데이터 조회 중...")
+    conn = _connect()
+    try:
+        sql = "SELECT trade_date as Date, close_kospi200 as KOSPI200_Close FROM COMMON_TB ORDER BY trade_date ASC"
+        df = pd.read_sql(sql, conn)
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
+        return df
+    finally:
+        conn.close()
+
 # ============================================================
 # HELPER 함수
 # ============================================================
@@ -160,6 +171,10 @@ def process_communication_service():
     if ndx.empty or us10yt.empty or etf.empty:
         print("❌ 외부 지표 수집 실패로 COMM 섹터 계산을 건너뜁니다.")
         return
+    
+    ndx['Date'] = pd.to_datetime(ndx['Date']).dt.normalize()
+    us10yt['Date'] = pd.to_datetime(us10yt['Date']).dt.normalize()
+    etf['Date'] = pd.to_datetime(etf['Date']).dt.normalize()
 
     all_results = []
 
@@ -170,6 +185,8 @@ def process_communication_service():
         
         df = safe_fetch_fdr(ticker, FETCH_START_DATE, END_DATE, 'Close')
         if df.empty: continue
+
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
         
         # 외부 지표 병합 및 결측치 보정
         m = pd.merge(df, ndx, on='Date', how='left')
@@ -258,6 +275,7 @@ def process_consumer_discretionary():
     if not cli_raw.empty:
         cli_raw = cli_raw.sort_values('Date')
         cli_raw['cli_lag'] = cli_raw['Value'].shift(3) # 3개월 선행성
+        cli_raw['Date'] = pd.to_datetime(cli_raw['Date']).dt.normalize()
         if macro_df.empty: 
             macro_df = cli_raw[['Date', 'cli_lag']]
         else: 
@@ -278,6 +296,11 @@ def process_consumer_discretionary():
         
         df = safe_fetch_fdr(ticker, FETCH_START_DATE, END_DATE, 'Close')
         if df.empty: continue
+
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
+        tiger_cd['Date'] = pd.to_datetime(tiger_cd['Date']).dt.normalize()
+        real_dpi['Date'] = pd.to_datetime(real_dpi['Date']).dt.normalize()
+        dgs10['Date'] = pd.to_datetime(dgs10['Date']).dt.normalize()
         
         # 데이터 병합
         m = pd.merge(df, tiger_cd, on='Date', how='left')
@@ -399,7 +422,7 @@ def process_consumer_staples():
         quarter_map = {1: '-03-31', 2: '-06-30', 3: '-09-30', 4: '-12-31'}
         df_funda_raw['Date'] = pd.to_datetime(
             df_funda_raw['year'].astype(str) + df_funda_raw['quarter'].map(quarter_map)
-        )
+        ).dt.normalize()
         df_funda = df_funda_raw[['ticker', 'Date', 'revenue_growth', 'ebitda', 'revenue']]
 
     finally:
@@ -411,6 +434,10 @@ def process_consumer_staples():
         print(f"📡 {name}({ticker}) 지표 산출 중...")
         df = safe_fetch_fdr(ticker, FETCH_START_DATE, END_DATE, 'Close')
         if df.empty: continue
+
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
+        tiger_cs['Date'] = pd.to_datetime(tiger_cs['Date']).dt.normalize()
+        usd_krw['Date'] = pd.to_datetime(usd_krw['Date']).dt.normalize()
         
         # 1. 기초 병합
         m = pd.merge(df, tiger_cs, on='Date', how='left')
@@ -511,8 +538,18 @@ def process_construction():
 
     # 환율, 국채 금리, 섹터 ETF (TIGER 200 건설: 139220)
     print("📡 환율, 금리 및 건설 ETF 데이터 수집 중...")
-    usd_krw = safe_fetch_yf('USDKRW=X', FETCH_START_DATE, END_DATE, 'USD_KRW')
-    kr10yt = safe_fetch_fdr('INVESTING:KR10YT=RR', FETCH_START_DATE, END_DATE, 'KR10Y')
+    conn = _connect()
+    try:
+        print("DB에서 금리 및 환율 데이터 로드 중...")
+        macro_query = "SELECT trade_date as Date, ktb10y as KR10Y, usdkrw as USD_KRW FROM MACROECONOMICS_TB"
+        db_macro = pd.read_sql(macro_query, conn)
+        db_macro['Date'] = pd.to_datetime(db_macro['Date']).dt.normalize()
+    except Exception as e:
+        print(f"DB 지표 수집 실패: {e}")
+        return
+    finally:
+        conn.close()
+    
     tiger_cons = safe_fetch_fdr('139220', FETCH_START_DATE, END_DATE, 'ETF_Close')
 
     all_results = []
@@ -525,14 +562,17 @@ def process_construction():
         df = safe_fetch_fdr(ticker, FETCH_START_DATE, END_DATE, 'Close')
         if df.empty: continue
         
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
+        tiger_cons['Date'] = pd.to_datetime(tiger_cons['Date']).dt.normalize()
+
         # 기본 병합
         m = pd.merge(df, tiger_cons, on='Date', how='left')
         
-        # Asof 병합 (환율, 금리, 매크로)
+        # Asof 병합 (DB 매크로[금리, 환율] + ECOS 매크로)
         m = m.sort_values('Date')
-        for extra_df in [usd_krw, kr10yt, macro_df]:
+        for extra_df in [db_macro, macro_df]:
             if not extra_df.empty:
-                extra_df['Date'] = pd.to_datetime(extra_df['Date'])
+                extra_df['Date'] = pd.to_datetime(extra_df['Date']).dt.normalize()
                 m = pd.merge_asof(m, extra_df.sort_values('Date'), on='Date', direction='backward')
 
         # 결측치 보정
@@ -618,13 +658,18 @@ def process_energy_chemical():
     macro_df = pd.DataFrame(columns=['Date'])
     # 스프레드 모멘텀 계산
     if not eth_df.empty and not nap_df.empty:
+        eth_df['Date'] = pd.to_datetime(eth_df['Date']).dt.normalize()
+        nap_df['Date'] = pd.to_datetime(nap_df['Date']).dt.normalize()
+
         spread = pd.merge(eth_df.rename(columns={'Value':'E'}), 
                           nap_df.rename(columns={'Value':'N'}), on='Date', how='inner')
         spread['spread_momentum'] = (spread['E'] - spread['N']).pct_change(1)
         macro_df = spread[['Date', 'spread_momentum']]
 
     if not mfg_df.empty:
+        mfg_df['Date'] = pd.to_datetime(mfg_df['Date']).dt.normalize()
         mfg_df['mfg_idx'] = mfg_df['Value']
+        
         if macro_df.empty: macro_df = mfg_df[['Date', 'mfg_idx']]
         else: macro_df = pd.merge(macro_df, mfg_df[['Date', 'mfg_idx']], on='Date', how='outer')
 
@@ -642,6 +687,9 @@ def process_energy_chemical():
         
         df = safe_fetch_fdr(ticker, FETCH_START_DATE, END_DATE, 'Close')
         if df.empty: continue
+
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
+        kodex_ench['Date'] = pd.to_datetime(kodex_ench['Date']).dt.normalize()
         
         # 병합
         m = pd.merge(df, kodex_ench, on='Date', how='left')
@@ -718,9 +766,19 @@ def process_finance():
         return
 
     # 2. 외부 공통 지표 수집 (금리, VIX, XLF, 산업 ETF)
-    # TIGER 200 금융(139270)
     print("📡 금리, VIX, 글로벌 금융(XLF) 데이터 수집 중...")
-    kr10y = safe_fetch_fdr('INVESTING:KR10YT=RR', FETCH_START_DATE, END_DATE, 'KR10Y')
+    conn = _connect()
+    try:
+        print("DB에서 국고채 금리(KTB10Y) 데이터 로드 중...")
+        macro_query = "SELECT trade_date as Date, ktb10y as KR10Y FROM MACROECONOMICS_TB"
+        kr10y = pd.read_sql(macro_query, conn)
+        kr10y['Date'] = pd.to_datetime(kr10y['Date']).dt.normalize()
+    except Exception as e:
+        print(f'DB 지표 수집 실패: {e}')
+        return
+    finally:
+        conn.close()
+
     xlf = safe_fetch_yf('XLF', FETCH_START_DATE, END_DATE, 'XLF_Close')
     vix = safe_fetch_yf('^VIX', FETCH_START_DATE, END_DATE, 'VIX_Close')
     tiger_fin = safe_fetch_fdr('139270', FETCH_START_DATE, END_DATE, 'ETF_Close')
@@ -728,6 +786,10 @@ def process_finance():
     if kr10y.empty or vix.empty or xlf.empty or tiger_fin.empty:
         print("❌ 외부 지표 수집 실패로 FIN 섹터 계산을 건너뜁니다.")
         return
+    
+    for df_tmp in [kr10y, xlf, vix, tiger_fin]:
+        if not df_tmp.empty:
+            df_tmp['Date'] = pd.to_datetime(df_tmp['Date']).dt.normalize()
 
     all_results = []
 
@@ -738,12 +800,18 @@ def process_finance():
         
         df = safe_fetch_fdr(ticker, FETCH_START_DATE, END_DATE, 'Close')
         if df.empty: continue
+
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
         
         # 외부 지표 병합
         m = pd.merge(df, tiger_fin, on='Date', how='left')
-        m = pd.merge(m, kr10y, on='Date', how='left')
-        m = pd.merge(m, vix, on='Date', how='left')
-        m = pd.merge(m, xlf, on='Date', how='left')
+        
+        # Asof 병합 (금리, VIX, XLF)
+        m = m.sort_values('Date')
+        for extra_df in [kr10y, vix, xlf]:
+            if not extra_df.empty:
+                extra_df['Date'] = pd.to_datetime(extra_df['Date']).dt.normalize()
+                m = pd.merge_asof(m, extra_df.sort_values('Date'), on='Date', direction='backward')
         
         # 결측치 보정 (금융 데이터는 연속성이 중요하므로 ffill)
         m = m.sort_values('Date').ffill().bfill()
@@ -819,10 +887,12 @@ def process_healthcare():
     ticker_list = [s['ticker'] for s in stocks]
 
     # 2. 외부 공통 지표 수집 (코스피 200, 헬스케어 ETF)
-    # TIGER 200 헬스케어(227540)
     print("📡 시장 지수 및 헬스케어 ETF 데이터 수집 중...")
-    kospi200 = safe_fetch_fdr('KS200', FETCH_START_DATE, END_DATE, 'KOSPI200_Close')
+    kospi200 = get_kospi200_from_db()
     tiger_hc = safe_fetch_fdr('227540', FETCH_START_DATE, END_DATE, 'ETF_Close')
+
+    kospi200['Date'] = pd.to_datetime(kospi200['Date']).dt.normalize()
+    tiger_hc['Date'] = pd.to_datetime(tiger_hc['Date']).dt.normalize()
     
     # 3. DB에서 재무 데이터 수집 (FUNDAMENTAL_TB)
     print("📡 DB에서 재무 데이터(PBR, 매출, R&D) 수집 중...")
@@ -839,7 +909,7 @@ def process_healthcare():
         quarter_map = {1: '-03-31', 2: '-06-30', 3: '-09-30', 4: '-12-31'}
         df_funda_raw['Date'] = pd.to_datetime(
             df_funda_raw['year'].astype(str) + df_funda_raw['quarter'].map(quarter_map)
-        )
+        ).dt.normalize()
 
         # R&D 비율 계산 (R&D 비용 / 매출)
         df_funda_raw['rnd_ratio'] = (df_funda_raw['rnd_expense'] / (df_funda_raw['revenue'] + 1e-9)) * 100
@@ -858,6 +928,8 @@ def process_healthcare():
         print(f"📡 {name}({ticker}) 지표 산출 중...")
         df = safe_fetch_fdr(ticker, FETCH_START_DATE, END_DATE, 'Close')
         if df.empty: continue
+
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
         
         m = pd.merge(df, tiger_hc, on='Date', how='left')
         m = pd.merge(m, kospi200, on='Date', how='left')
@@ -946,13 +1018,24 @@ def process_heavy_industry():
     
     macro_df = pd.DataFrame(columns=['Date'])
     if not mfg_raw.empty:
+        mfg_raw['Date'] = pd.to_datetime(mfg_raw['Date']).dt.normalize()
         mfg_raw['mfg_idx'] = mfg_raw['Value']
-        macro_df = mfg_raw[['Date', 'mfg_idx']]
+        macro_df = mfg_raw[['Date', 'mfg_idx']].copy()
 
     # 환율, WTI 유가, 섹터 ETF (KODEX 기계장비: 102960)
     print("📡 환율, 유가 및 중공업(기계) ETF 데이터 수집 중...")
-    usd_krw = safe_fetch_yf('USDKRW=X', FETCH_START_DATE, END_DATE, 'USD_KRW')
-    wti = safe_fetch_yf('CL=F', FETCH_START_DATE, END_DATE, 'WTI_Close')
+    conn = _connect()
+    try:
+        print("DB에서 환율 및 유가 데이터 로드 중...")
+        macro_query = "SELECT trade_date as Date, usdkrw as USD_KRW, wti as WTI_Close FROM MACROECONOMICS_TB"
+        db_macro = pd.read_sql(macro_query, conn)
+        db_macro['Date'] = pd.to_datetime(db_macro['Date']).dt.normalize()
+    except Exception as e:
+        print(f'DB 지표 수집 실패: {e}')
+        return
+    finally:
+        conn.close()
+
     mach_etf = safe_fetch_fdr('102960', FETCH_START_DATE, END_DATE, 'ETF_Close')
 
     all_results = []
@@ -964,15 +1047,18 @@ def process_heavy_industry():
         
         df = safe_fetch_fdr(ticker, FETCH_START_DATE, END_DATE, 'Close')
         if df.empty: continue
+
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
+        mach_etf['Date'] = pd.to_datetime(mach_etf['Date']).dt.normalize()
         
         # 기본 병합
         m = pd.merge(df, mach_etf, on='Date', how='left')
         
-        # Asof 병합 (환율, 유가, 제조업 지수)
+        # Asof 병합 (DB 매크로[환율, 유가] + ECOS 제조업 지수)
         m = m.sort_values('Date')
-        for extra_df in [usd_krw, wti, macro_df]:
+        for extra_df in [db_macro, macro_df]:
             if not extra_df.empty:
-                extra_df['Date'] = pd.to_datetime(extra_df['Date'])
+                extra_df['Date'] = pd.to_datetime(extra_df['Date']).dt.normalize()
                 m = pd.merge_asof(m, extra_df.sort_values('Date'), on='Date', 
                                   direction='backward', tolerance=pd.Timedelta('2D'))
 
@@ -1059,22 +1145,29 @@ def process_industrials():
     
     macro_df = pd.DataFrame(columns=['Date'])
     if not mfg_raw.empty:
+        mfg_raw['Date'] = pd.to_datetime(mfg_raw['Date']).dt.normalize()
         mfg_raw['mfg_idx'] = mfg_raw['Value']
-        macro_df = mfg_raw[['Date', 'mfg_idx']]
+        macro_df = mfg_raw[['Date', 'mfg_idx']].copy()
     
     if not sea_bsi_raw.empty:
+        sea_bsi_raw['Date'] = pd.to_datetime(sea_bsi_raw['Date']).dt.normalize()
         sea_bsi_raw['sea_bsi'] = sea_bsi_raw['Value']
-        if macro_df.empty: macro_df = sea_bsi_raw[['Date', 'sea_bsi']]
-        else: macro_df = pd.merge(macro_df, sea_bsi_raw[['Date', 'sea_bsi']], on='Date', how='outer')
+        if macro_df.empty: 
+            macro_df = sea_bsi_raw[['Date', 'sea_bsi']].copy()
+        else: 
+            macro_df = pd.merge(macro_df, sea_bsi_raw[['Date', 'sea_bsi']], on='Date', how='outer')
         
     if not ship_vol_raw.empty:
+        ship_vol_raw['Date'] = pd.to_datetime(ship_vol_raw['Date']).dt.normalize()
         ship_vol_raw['ship_vol_idx'] = ship_vol_raw['Value']
-        if macro_df.empty: macro_df = ship_vol_raw[['Date', 'ship_vol_idx']]
-        else: macro_df = pd.merge(macro_df, ship_vol_raw[['Date', 'ship_vol_idx']], on='Date', how='outer')
+        if macro_df.empty: 
+            macro_df = ship_vol_raw[['Date', 'ship_vol_idx']].copy()
+        else: 
+            macro_df = pd.merge(macro_df, ship_vol_raw[['Date', 'ship_vol_idx']], on='Date', how='outer')
 
     # 시장 지수 및 섹터 ETF (TIGER 200 산업재: 227550)
     print("📡 KOSPI 200 및 산업재 ETF 데이터 수집 중...")
-    kospi200 = safe_fetch_fdr('KS200', FETCH_START_DATE, END_DATE, 'KOSPI200_Close')
+    kospi200 = get_kospi200_from_db()
     tiger_ig = safe_fetch_fdr('227550', FETCH_START_DATE, END_DATE, 'ETF_Close')
 
     all_results = []
@@ -1086,6 +1179,10 @@ def process_industrials():
         
         df = safe_fetch_fdr(ticker, FETCH_START_DATE, END_DATE, 'Close')
         if df.empty: continue
+
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
+        tiger_ig['Date'] = pd.to_datetime(tiger_ig['Date']).dt.normalize()
+        kospi200['Date'] = pd.to_datetime(kospi200['Date']).dt.normalize()
         
         # 기본 병합
         m = pd.merge(df, tiger_ig, on='Date', how='left')
@@ -1100,14 +1197,14 @@ def process_industrials():
         fill_cols = ['ETF_Close', 'KOSPI200_Close', 'mfg_idx', 'sea_bsi', 'ship_vol_idx']
         m[fill_cols] = m[fill_cols].ffill().bfill()
 
-        # [계산 로직]
-        s_ret = m['Close'].pct_change()
+        # (1) 상대적 변동성 (20일)
+        s_std = m['Close'].pct_change()
+        k_std = m['KOSPI200_Close'].pct_change()
         
-        # (1) 상대적 변동성 비율 (Vol Ratio) - 20일 기준
-        k_ret = m['KOSPI200_Close'].pct_change()
-        v_stock = s_ret.rolling(20, min_periods=15).std()
-        v_market = k_ret.rolling(20, min_periods=15).std()
-        m['vol_ratio'] = v_stock / (v_market + 1e-10)
+        vol_raw = s_std / (k_std + 1e-10)
+
+        m['vol_ratio'] = np.where((vol_raw <= 999999) & np.isfinite(vol_raw), vol_raw, np.nan)
+        m['vol_ratio'] = m['vol_ratio']
         
         # (2) 물류 수요 모멘텀 (3개월 시계열 기준)
         m['logistics_momentum'] = m['sea_bsi'].pct_change(60)
@@ -1129,10 +1226,38 @@ def process_industrials():
 
     # 4. DB 적재
     if all_results:
-        final_df = pd.concat(all_results).replace({np.nan: None})
+        import math
+        final_df = pd.concat(all_results)
+        records = final_df.to_dict('records')
+
         conn = _connect()
         try:
             cur = conn.cursor()
+            data = []
+
+            for row in records:
+                def clean_val(val):
+                    try:
+                        if val is None or not math.isfinite(float(val)):
+                            return None
+                        v = float(val)
+                        if abs(v) >= 999999: 
+                            return None
+                        return v
+                    except:
+                        return None
+
+                data.append((
+                    row['Date'], 
+                    row['ticker'], 
+                    clean_val(row.get('vol_ratio')),
+                    clean_val(row.get('logistics_momentum')),
+                    clean_val(row.get('ship_vol_lag3')),
+                    clean_val(row.get('mfg_lag3')),
+                    clean_val(row.get('mfg_lag6')),
+                    clean_val(row.get('z_score'))   
+                ))
+            
             sql = """
                 INSERT INTO INDUSTRIALS_TB (
                     trade_date, ticker, vol_ratio, logistics_momentum, 
@@ -1144,11 +1269,6 @@ def process_industrials():
                     ship_vol_lag3=VALUES(ship_vol_lag3), mfg_lag3=VALUES(mfg_lag3),
                     mfg_lag6=VALUES(mfg_lag6), z_score=VALUES(z_score);
             """
-            data = [
-                (row['Date'], row['ticker'], row['vol_ratio'], row['logistics_momentum'], 
-                 row['ship_vol_lag3'], row['mfg_lag3'], row['mfg_lag6'], row['z_score']) 
-                for _, row in final_df.iterrows()
-            ]
             cur.executemany(sql, data)
             conn.commit()
             print(f"✅ INDUSTRIALS_TB 업데이트 완료: {len(final_df)}건")
@@ -1184,6 +1304,10 @@ def process_it():
     if soxx.empty or aapl.empty or xli.empty or tiger_it.empty:
         print("❌ 글로벌 지표 수집 실패로 IT 섹터 계산을 건너뜁니다.")
         return
+    
+    for df_tmp in [soxx, aapl, xli, tiger_it]:
+        if not df_tmp.empty:
+            df_tmp['Date'] = pd.to_datetime(df_tmp['Date']).dt.normalize()
 
     all_results = []
 
@@ -1194,6 +1318,8 @@ def process_it():
         
         df = safe_fetch_fdr(ticker, FETCH_START_DATE, END_DATE, 'Close')
         if df.empty: continue
+
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
         
         # 데이터 병합
         m = pd.merge(df, tiger_it, on='Date', how='left')
@@ -1282,23 +1408,41 @@ def process_materials():
     
     macro_df = pd.DataFrame(columns=['Date'])
     if not mfg_raw.empty:
+        mfg_raw['Date'] = pd.to_datetime(mfg_raw['Date']).dt.normalize()
         mfg_raw['mfg_idx'] = mfg_raw['Value']
-        macro_df = mfg_raw[['Date', 'mfg_idx']]
+        macro_df = mfg_raw[['Date', 'mfg_idx']].copy()
     
     if not cli_raw.empty:
+        cli_raw['Date'] = pd.to_datetime(cli_raw['Date']).dt.normalize()
         cli_raw['cli_idx'] = cli_raw['Value']
-        if macro_df.empty: macro_df = cli_raw[['Date', 'cli_idx']]
-        else: macro_df = pd.merge(macro_df, cli_raw[['Date', 'cli_idx']], on='Date', how='outer')
+        if macro_df.empty: 
+            macro_df = cli_raw[['Date', 'cli_idx']].copy()
+        else:
+            macro_df = pd.merge(macro_df, cli_raw[['Date', 'cli_idx']], on='Date', how='outer')
 
     if not steel_ppi_raw.empty:
+        steel_ppi_raw['Date'] = pd.to_datetime(steel_ppi_raw['Date']).dt.normalize()
         steel_ppi_raw['steel_ppi'] = steel_ppi_raw['Value']
-        if macro_df.empty: macro_df = steel_ppi_raw[['Date', 'steel_ppi']]
-        else: macro_df = pd.merge(macro_df, steel_ppi_raw[['Date', 'steel_ppi']], on='Date', how='outer')
+        if macro_df.empty: 
+            macro_df = steel_ppi_raw[['Date', 'steel_ppi']].copy()
+        else:
+            macro_df = pd.merge(macro_df, steel_ppi_raw[['Date', 'steel_ppi']], on='Date', how='outer')
 
     # 원자재 및 글로벌 지표 (구리, WTI, 중국 ETF-FXI, 철강 ETF-117680)
     print("📡 원자재(구리/WTI) 및 중국/철강 ETF 데이터 수집 중...")
+    conn = _connect()
+    try:
+        print("DB에서 유가 데이터 로드 중...")
+        macro_query = "SELECT trade_date as Date, wti as WTI_Close FROM MACROECONOMICS_TB"
+        db_macro = pd.read_sql(macro_query, conn)
+        db_macro['Date'] = pd.to_datetime(db_macro['Date']).dt.normalize()
+    except Exception as e:
+        print(f'DB 지표 수집 실패: {e}')
+        return
+    finally:
+        conn.close()
+
     copper = safe_fetch_yf('HG=F', FETCH_START_DATE, END_DATE, 'Copper_Close')
-    wti = safe_fetch_yf('CL=F', FETCH_START_DATE, END_DATE, 'WTI_Close')
     fxi = safe_fetch_yf('FXI', FETCH_START_DATE, END_DATE, 'FXI_Close')
     steel_etf = safe_fetch_fdr('117680', FETCH_START_DATE, END_DATE, 'ETF_Close')
 
@@ -1311,15 +1455,18 @@ def process_materials():
         
         df = safe_fetch_fdr(ticker, FETCH_START_DATE, END_DATE, 'Close')
         if df.empty: continue
+
+        df['Date'] = pd.to_datetime(df['Date']).dt.normalize()
+        steel_etf['Date'] = pd.to_datetime(steel_etf['Date']).dt.normalize()
         
         # 기본 병합
         m = pd.merge(df, steel_etf, on='Date', how='left')
         
-        # Asof 병합
+        # Asof 병합 (구리, 중국ETF, DB_WTI, 매크로_ECOS)
         m = m.sort_values('Date')
-        for extra_df in [copper, wti, fxi, macro_df]:
+        for extra_df in [copper, fxi, db_macro, macro_df]:
             if not extra_df.empty:
-                extra_df['Date'] = pd.to_datetime(extra_df['Date'])
+                extra_df['Date'] = pd.to_datetime(extra_df['Date']).dt.normalize()
                 m = pd.merge_asof(m, extra_df.sort_values('Date'), on='Date', 
                                   direction='backward', tolerance=pd.Timedelta('2D'))
 
