@@ -20,9 +20,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # 5. 내 코드 전부 복사
 COPY . .
 
-# 6. 인공지능 모델 저장 폴더 (FinBERT 모델을 보관할 장소)
+# 6. 인공지능 모델 저장 및 로그 저장 폴더 생성
 ENV TRANSFORMERS_CACHE=/app/model_cache
 RUN mkdir -p /app/model_cache
+RUN mkdir -p /app/logs
 
 # 7. 환경 변수 설정 (Python 출력 로그 확인용)
 ENV PYTHONUNBUFFERED=1
