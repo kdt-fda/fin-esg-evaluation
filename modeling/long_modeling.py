@@ -23,16 +23,20 @@ def safe_merge_asof(left, right, on=None, left_on=None, right_on=None, **kwargs)
     return pd.merge_asof(left, right, on=on, left_on=left_on, right_on=right_on, **kwargs)
 
 # ---------------------------------------------------------
-# 1. 메가 데이터 로더
+# 1. 메가 데이터 로더 (환경변수 엄격 적용)
 # ---------------------------------------------------------
 def load_mega_data_from_db():
-    print("🌐 DB 추출: 서버에서 메가 데이터 결합 중...")
+    print("[시스템] DB 추출: 서버에서 메가 데이터 결합 중...")
     
-    db_host = os.environ.get('DB_HOST', '3.34.100.134')
-    db_port = os.environ.get('DB_PORT', '3302')
-    db_user = os.environ.get('DB_USER', 'root')
-    db_password = os.environ.get('DB_PASSWORD', 'team2')
-    db_name = os.environ.get('DB_NAME', 'STOCK_DB')
+    # 기본값(하드코딩) 제거, 순수 환경변수 호출
+    db_host = os.environ.get('DB_HOST')
+    db_port = os.environ.get('DB_PORT')
+    db_user = os.environ.get('DB_USER')
+    db_password = os.environ.get('DB_PASSWORD')
+    db_name = os.environ.get('DB_NAME')
+        
+    if not all([db_host, db_port, db_user, db_password, db_name]):
+        raise ValueError("[시스템 오류] DB 환경변수가 완전히 설정되지 않았습니다. (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME 확인 필요)")
         
     engine = create_engine(f'mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}')
     
@@ -161,7 +165,7 @@ def run_long_term_pipeline():
     valid_idx = int(len(unique_trading_days) * 0.8)
     
     if valid_idx == 0 or valid_idx >= len(unique_trading_days):
-        raise ValueError("데이터가 너무 적습니다.")
+        raise ValueError("[시스템 오류] 학습을 위한 데이터가 충분하지 않습니다.")
 
     embargo_limit = unique_trading_days[max(0, valid_idx - H_VAL)]
     valid_dates = unique_trading_days[valid_idx:]
@@ -233,9 +237,11 @@ def run_long_term_pipeline():
     overall_rank_ic = np.mean(daily_ic)
 
     print("\n" + "=" * 50)
-    print(f" [9개월 모델] 전체 방향성 적중률 : {overall_dir_acc:.2f}%")
-    print(f" [9개월 모델] 실전 Top 20 적중률: {overall_top20_hit:.2f}%")
-    print(f" [9개월 모델] 평균 Rank IC      : {overall_rank_ic:.4f}")
+    print(f"[평가] 9개월 모델 전체 성능 지표")
+    print("-" * 50)
+    print(f"방향성 적중률       : {overall_dir_acc:.2f}%")
+    print(f"실전 Top 20 적중률  : {overall_top20_hit:.2f}%")
+    print(f"평균 Rank IC        : {overall_rank_ic:.4f}")
     print("=" * 50)
 
     # ---------------------------------------------------------
@@ -312,7 +318,9 @@ def run_long_term_pipeline():
     res_all['Expected_Return(%)'] = res_all['Expected_Return(%)'].round(2)
     res_all['Confidence_Score'] = res_all['Confidence_Score'].round(1)
 
-    print(f"  {latest_date.date()} 기준 [9개월 섹터별 투자 매력도 TOP 랭킹]")
+    print("\n" + "=" * 50)
+    print(f"[{latest_date.date()} 기준 9개월 섹터별 투자 매력도 TOP 랭킹]")
+    print("=" * 50)
 
     sectors = res_all['Sector_Name'].unique()
     for sector in sectors:
@@ -320,12 +328,12 @@ def run_long_term_pipeline():
         sector_df_print = res_all[res_all['Sector_Name'] == sector].head(3)
         if len(sector_df_print) == 0: continue
             
-        print(f"\n📁 [ {sector} 섹터 ] 평균 매력도: {res_all[res_all['Sector_Name'] == sector]['Attractiveness_Score'].mean():.1f}점")
+        print(f"\n[ {sector} 섹터 ] 평균 매력도: {res_all[res_all['Sector_Name'] == sector]['Attractiveness_Score'].mean():.1f}점")
         print("-" * 90)
         
         for _, row in sector_df_print.iterrows():
-            print(f"🔹 {row['Stock_Name']:<10} | 매력도: {row['Attractiveness_Score']}점 | 기대수익: {row['Expected_Return(%)']}% | 신뢰도: {row['Confidence_Score']}점")
-            print(f"   ↳ 긍정 요인: {row['Top_5_Positive_Factors']}")
+            print(f"- {row['Stock_Name']:<10} | 매력도: {row['Attractiveness_Score']}점 | 기대수익: {row['Expected_Return(%)']}% | 신뢰도: {row['Confidence_Score']}점")
+            print(f"   -> 긍정 요인: {row['Top_5_Positive_Factors']}")
     
 if __name__ == "__main__":
     run_long_term_pipeline()
