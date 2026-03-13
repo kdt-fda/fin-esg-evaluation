@@ -24,6 +24,5 @@ services:
   #  restart: on-failure
   #  env_file:
   #    - .env
-  #  # 크롤러가 데이터를 다 쌓은 뒤에 동작해야 한다면 의존성 추가
   #  depends_on:
   #    - crawler
