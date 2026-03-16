@@ -25,7 +25,7 @@ def create_prediction_tables():
     conn = _connect()
     try:
         with conn.cursor() as cur:
-            # 1. 단기 예측 테이블 (SHORT_PRED_TB)
+            # 1. 단기 예측 테이블
             sql_short = """
                 CREATE TABLE IF NOT EXISTS SHORT_PRED_TB (
                     pred_date DATE NOT NULL,
@@ -44,7 +44,7 @@ def create_prediction_tables():
             cur.execute(sql_short)
             print("✅ SHORT_PRED_TB 생성 완료 (DECIMAL 적용)")
 
-            # 2. 중장기 예측 테이블 (LONG_PRED_TB)
+            # 2. 중장기 예측 테이블
             sql_long = """
                 CREATE TABLE IF NOT EXISTS LONG_PRED_TB (
                     pred_date DATE NOT NULL,
@@ -66,7 +66,7 @@ def create_prediction_tables():
             cur.execute(sql_long)
             print("✅ LONG_PRED_TB 생성 완료 (DECIMAL 적용)")
 
-            # 3. 단기 LLM 해석 테이블 (SHORT_LLM_TB)
+            # 3. 단기 LLM 해석 테이블
             sql_short_llm = """
                 CREATE TABLE IF NOT EXISTS SHORT_LLM_TB (
                     pred_date DATE NOT NULL,
@@ -80,7 +80,7 @@ def create_prediction_tables():
             cur.execute(sql_short_llm)
             print("✅ SHORT_LLM_TB 생성 완료")
 
-            # 4. 중장기 LLM 해석 테이블 (LONG_LLM_TB)
+            # 4. 중장기 LLM 해석 테이블
             sql_long_llm = """
                 CREATE TABLE IF NOT EXISTS LONG_LLM_TB (
                     pred_date DATE NOT NULL,
