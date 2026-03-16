@@ -4,6 +4,7 @@ import numpy as np
 from sqlalchemy import create_engine
 import pymysql
 import shap
+import concurrent.futures
 
 from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_error
@@ -29,16 +30,14 @@ pd.merge_asof = patched_merge_asof
 # 1. DB 로더 및 공통 변수 식별
 # ---------------------------------------------------------
 def load_mega_data_from_db():
-    # 환경변수 호출 
     db_host = os.environ.get('DB_HOST')
     db_port = os.environ.get('DB_PORT')
     db_user = os.environ.get('DB_USER')
     db_password = os.environ.get('DB_PASSWORD')
     db_name = os.environ.get('DB_NAME')
     
-    # 환경변수 누락 시 에러 발생
     if not all([db_host, db_port, db_user, db_password, db_name]):
-        raise ValueError("[시스템 오류] DB 연결을 위한 환경변수가 설정되지 않았습니다. 실행 전 환경변수를 셋팅해주세요.")
+        raise ValueError("[시스템 오류] DB 환경변수가 설정되지 않았습니다.")
     
     engine = create_engine(f'mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}')
     
@@ -70,7 +69,7 @@ def load_mega_data_from_db():
     
     macro_cols = [c for c in macro.columns if c != 'Date']
     common_cols = [c for c in common.columns if c != 'Date']
-    global_exclude_bases = set(macro_cols + common_cols + ['msci_rebal_month'])
+    global_exclude_bases = set(macro_cols + common_cols + ['msci_event'])
     
     return engine, stocks, macro, common, news, kospi_sectors, global_exclude_bases
 
@@ -80,36 +79,36 @@ def load_mega_data_from_db():
 def apply_technical_indicators(df):
     df = df.sort_values('Date').copy()
     
-    df['ma_5'] = df['Close'].rolling(window=5).mean()
-    df['ma_20'] = df['Close'].rolling(window=20).mean()
+    df['ma5'] = df['Close'].rolling(window=5).mean()
+    df['ma20'] = df['Close'].rolling(window=20).mean()
     
+    df['golden_cross_5_20'] = np.where((df['ma5'].shift(1) < df['ma20'].shift(1)) & (df['ma5'] >= df['ma20']), 1, 0)
+    df['death_cross_5_20'] = np.where((df['ma5'].shift(1) > df['ma20'].shift(1)) & (df['ma5'] <= df['ma20']), 1, 0)
+
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
-    df['rsi_14'] = 100 - (100 / (1 + rs))
+    df['rsi'] = 100 - (100 / (1 + rs))
     
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['macd'] = exp1 - exp2
-    df['macd_signal_line'] = df['macd'].ewm(span=9, adjust=False).mean()
+    df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
     
     std_20 = df['Close'].rolling(window=20).std()
-    df['bb_upper'] = df['ma_20'] + (std_20 * 2)
-    df['bb_lower'] = df['ma_20'] - (std_20 * 2)
+    df['bb_upper'] = df['ma20'] + (std_20 * 2)
+    df['bb_lower'] = df['ma20'] - (std_20 * 2)
     df['bb_breakout'] = np.where(df['Close'] > df['bb_upper'], 1, np.where(df['Close'] < df['bb_lower'], -1, 0))
     
-    df['short_buy_signal'] = np.where((df['rsi_14'] < 30) | (df['macd'] > df['macd_signal_line']), 1, 0)
-    df['short_sell_signal'] = np.where((df['rsi_14'] > 70) | (df['macd'] < df['macd_signal_line']), 1, 0)
-    df['msci_rebal_month'] = df['Date'].dt.month.isin([2, 5, 8, 11]).astype(int)
+    df['msci_event'] = df['Date'].dt.month.isin([2, 5, 8, 11]).astype(int)
     
     return df
 
 # ---------------------------------------------------------
-# 3. 데이터 파이프라인 및 모델 학습
+# 3. 데이터 파이프라인 및 멀티쓰레딩/GPU 모델 학습
 # ---------------------------------------------------------
 def run_short_term_pipeline(win: int = 10, horizon: int = 20):
-    print("[시스템] DB 추출 및 데이터 병합 진행 중...")
     engine, stocks, macro, common, news, kospi_sectors, global_exclude_bases = load_mega_data_from_db()
     
     stock_names = kospi_sectors['stock_name'].dropna().unique()
@@ -120,21 +119,18 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
     
     test_indices_by_stock = {}
     current_test_idx = 0
-
     global_feats = None 
 
     for idx, s_name in enumerate(stock_names):
         target_ticker = str(kospi_sectors[kospi_sectors['stock_name'] == s_name]['ticker'].iloc[0]).replace(".0", "").strip().zfill(6)
         df = stocks[stocks['Ticker'] == target_ticker].copy()
         
-        if len(df) < win + horizon + 50:
-            continue
+        if len(df) < win + horizon + 50: continue
 
         df = apply_technical_indicators(df)
         df['Date'] = pd.to_datetime(df['Date']).astype('datetime64[ns]')
         
-        df = df.merge(macro, on="Date", how="left")
-        df = df.merge(common, on="Date", how="left")
+        df = df.merge(macro, on="Date", how="left").merge(common, on="Date", how="left")
         
         if not news.empty:
             news_target = news[news['Ticker'] == target_ticker].copy()
@@ -143,10 +139,16 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
                 if 'news_score' in df.columns: df['news_score'] = df['news_score'].fillna(0)
 
         df = df.sort_values("Date").reset_index(drop=True)
-        df['target_20d_ret'] = df['Close'].shift(-horizon) / df['Close'] - 1.0
+        
+        target_cols = []
+        for h in range(1, horizon + 1):
+            col_name = f'target_{h}d_ret'
+            df[col_name] = df['Close'].shift(-h) / df['Close'] - 1.0
+            target_cols.append(col_name)
+            
         df = df.replace([np.inf, -np.inf], np.nan).ffill().fillna(0)
         
-        drop_cols = ["Date", "Ticker", "stock_name", "Close", "target_20d_ret"]
+        drop_cols = ["Date", "Ticker", "stock_name", "Close"] + target_cols
         current_feats = [c for c in df.columns if c not in drop_cols and pd.api.types.is_numeric_dtype(df[c])]
         
         if global_feats is None: global_feats = current_feats
@@ -160,7 +162,7 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
         inf_X_list.append(last_valid_X)
         inf_ticker_list.append(target_ticker)
 
-        Y = df['target_20d_ret']
+        Y = df[target_cols]
         bases = df['Close']
         
         idx_valid = X_lag.dropna().index.intersection(Y.dropna().index)
@@ -193,45 +195,57 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
     base_test = pd.concat(global_base_te, axis=0).reset_index(drop=True)
     X_inf = pd.concat(inf_X_list, axis=0).reset_index(drop=True)
 
-    print("[시스템] 데이터 병합 완료. XGBoost 모델 학습을 시작합니다.")
+    use_gpu = False
     params = {
         "n_estimators": 300, "max_depth": 4, "learning_rate": 0.03,
         "subsample": 0.8, "colsample_bytree": 0.8, "objective": "reg:squarederror", 
-        "random_state": 42, "n_jobs": -1
+        "random_state": 42
     }
     
-    model = XGBRegressor(**params)
-    model.fit(X_train, y_train)
+    try:
+        tmp = XGBRegressor(tree_method='hist', device='cuda', n_estimators=1)
+        tmp.fit(np.array([[0.0]]), np.array([0.0]))
+        use_gpu = True
+        params['tree_method'] = 'hist'
+        params['device'] = 'cuda'
+    except Exception:
+        params['tree_method'] = 'hist' 
 
-    # ---------------------------------------------------------
-    # 4. 전체 성능 지표 및 신뢰도 평가
-    # ---------------------------------------------------------
-    pred_ret = model.predict(X_test)
-    act_ret = y_test.values
+    cpu_cores = os.cpu_count() or 4
+    max_workers = 4 if use_gpu else min(4, max(1, cpu_cores // 2))
+    params['n_jobs'] = max(1, cpu_cores // max_workers) if not use_gpu else -1
+    
+    models = [None] * horizon
+
+    def train_target_model(h):
+        m = XGBRegressor(**params)
+        m.fit(X_train, y_train.iloc[:, h])
+        return h, m
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(train_target_model, h) for h in range(horizon)]
+        for future in concurrent.futures.as_completed(futures):
+            h, m = future.result()
+            models[h] = m
+
+# ---------------------------------------------------------
+# 4. 전체 성능 지표 및 신뢰도 평가
+# ---------------------------------------------------------
+    pred_ret_all = np.column_stack([m.predict(X_test) for m in models])
+    pred_ret_20d = pred_ret_all[:, -1]
+    act_ret_20d = y_test.iloc[:, -1].values
     base_arr = base_test.values
     
-    pred_prices_te = base_arr * (1.0 + pred_ret)
-    act_prices_te = base_arr * (1.0 + act_ret)
+    pred_prices_te = base_arr * (1.0 + pred_ret_20d)
+    act_prices_te = base_arr * (1.0 + act_ret_20d)
 
-    overall_dir_acc = np.mean(np.sign(pred_ret) == np.sign(act_ret)) * 100
-    overall_mae = mean_absolute_error(act_prices_te, pred_prices_te)
-    overall_mape = np.mean(np.abs((act_prices_te - pred_prices_te) / np.clip(act_prices_te, 1e-9, None))) * 100
-    
-    print("\n" + "=" * 50)
-    print("[평가] 단기 모델 전체 성능 지표")
-    print("-" * 50)
-    print(f"방향성 적중률 (Directional Accuracy) : {overall_dir_acc:.2f}%")
-    print(f"평균 절대 오차 (MAE)                 : {int(overall_mae):,} 원")
-    print(f"평균 비율 오차 (MAPE)                : {overall_mape:.2f}%")
-    print("=" * 50)
-    
     confidence_results = []
     
     for ticker, (start_idx, end_idx) in test_indices_by_stock.items():
         if start_idx == end_idx: continue
         
-        st_pred_ret = pred_ret[start_idx:end_idx]
-        st_act_ret = act_ret[start_idx:end_idx]
+        st_pred_ret = pred_ret_20d[start_idx:end_idx]
+        st_act_ret = act_ret_20d[start_idx:end_idx]
         st_pred_price = pred_prices_te[start_idx:end_idx]
         st_act_price = act_prices_te[start_idx:end_idx]
         
@@ -249,13 +263,14 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
         
     df_conf = pd.DataFrame(confidence_results)
 
-    # ---------------------------------------------------------
-    # 5. 실전 추론 및 SHAP 지표 통합(Aggregation) 분석
-    # ---------------------------------------------------------
-    print("[시스템] 실전 추론 및 종목 고유 지표(통합) SHAP 분석 중...")
-    inf_pred_ret = model.predict(X_inf) * 100
+# ---------------------------------------------------------
+# 5. 실전 추론 및 SHAP 분석
+# ---------------------------------------------------------
+    inf_pred_ret_all = np.column_stack([m.predict(X_inf) for m in models])
+    inf_pred_ret_20d = inf_pred_ret_all[:, -1] * 100  
     
-    explainer = shap.TreeExplainer(model)
+    model_20d = models[-1]
+    explainer = shap.TreeExplainer(model_20d)
     shap_values = explainer.shap_values(X_inf)
     
     feature_names = X_inf.columns
@@ -263,21 +278,14 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
 
     for i in range(len(X_inf)):
         sv = shap_values[i]
-        
-        # 기업별 지표 합산을 위한 딕셔너리
         agg_shap = {}
-        
         for j, f_name in enumerate(feature_names):
             base_f = f_name.split('_lag')[0]
-            
-            # 매크로/공통 지표가 아닌 종목 고유 지표만 취합
             if base_f not in global_exclude_bases:
                 agg_shap[base_f] = agg_shap.get(base_f, 0) + sv[j]
         
-        # 합산된 총 기여도가 양수(>0)인 지표만 추출하여 내림차순 정렬
         positive_features = {k: v for k, v in agg_shap.items() if v > 0}
         sorted_features = sorted(positive_features.items(), key=lambda item: item[1], reverse=True)
-        
         top_5 = sorted_features[:5]
         
         if top_5:
@@ -288,21 +296,16 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
 
     df_final = pd.DataFrame({
         'Ticker': inf_ticker_list,
-        'Expected_Return(%)': np.round(inf_pred_ret, 2),
+        'Expected_Return_20d(%)': np.round(inf_pred_ret_20d, 2),
+        'Forecast_Path(%)': [np.round(path * 100, 2).tolist() for path in inf_pred_ret_all],
         'Top_5_Positive_Factors': positive_shap_reasons
     })
     
     df_final = pd.merge(df_final, df_conf, on='Ticker', how='left')
     df_final['Confidence_Score'] = df_final['Confidence_Score'].fillna(50.0)
-    df_final = df_final.sort_values(by='Expected_Return(%)', ascending=False).reset_index(drop=True)
+    df_final = df_final.sort_values(by='Expected_Return_20d(%)', ascending=False).reset_index(drop=True)
 
-    print("\n" + "=" * 100)
-    print(f"[결과] 단기(20일) 예측 및 신뢰도 리포트 (통합 SHAP 기준)")
-    print("=" * 100)
-    pd.set_option('display.max_rows', None)
-    pd.set_option('display.max_columns', None)
-    pd.set_option('display.width', 1000)
-    print(df_final.to_string(index=False))
+    return df_final
 
 if __name__ == "__main__":
-    run_short_term_pipeline(win=10, horizon=20)
+    df_result = run_short_term_pipeline(win=10, horizon=20)
