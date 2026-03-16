@@ -40,7 +40,9 @@ _session.mount('https://', adapter)
 def _safe_post(self, **params):
     headers = getattr(self, 'headers', {}).copy() if getattr(self, 'headers', None) else {}
     headers['User-Agent'] = _UA
-    headers['Referer'] = "http://data.krx.co.kr/"
+    headers['Referer'] = "http://data.krx.co.kr/contents/MDC/MAIN/main/index.cmd" 
+    headers['Origin'] = "http://data.krx.co.kr" 
+    headers['X-Requested-With'] = "XMLHttpRequest" 
     fake_ip = _get_fake_ip()
     headers['X-Forwarded-For'] = fake_ip
     headers['X-Real-IP'] = fake_ip
