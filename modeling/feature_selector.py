@@ -1,9 +1,8 @@
-import pandas as pd
 import numpy as np
 
 class FeatureSelector:
     def __init__(self):
-        # 1. 공통 피쳐 (고정 리스트)
+        # 1. 공통 피쳐
         self.common_base = [
             'trade_date', 'ticker', 'stock_name', 'open', 'high', 'low', 'close', 
             'volume', 'short_balance', 'news_score', 'usdkrw', 'wti', 'brent', 
