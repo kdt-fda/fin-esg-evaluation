@@ -31,7 +31,7 @@ class FeatureSelector:
         ]
 
     def _get_sector_derivative_features(self, df):
-        """cli_lag6 다음부터 revenue 이전까지의 섹터별 파생 지표를 동적으로 추출"""
+        """통합된 데이터에서 섹터별 파생 지표를 동적으로 추출"""
         try:
             cols = list(df.columns)
             start_idx = cols.index('cli_lag6') + 1
@@ -44,14 +44,8 @@ class FeatureSelector:
         except (ValueError, IndexError):
             return []
 
-    def create_target(self, df, horizon=5):
-        """타겟 변수 생성 (n일 후 수익률)"""
-        df = df.sort_values('trade_date').copy()
-        df['target_return'] = df['close'].shift(-horizon) / df['close'] - 1
-        return df.dropna(subset=['target_return'])
-
     def get_features(self, df, mode='short'):
-        """모드에 따른 피쳐셋과 타겟 반환"""
+        """모드에 따른 학습용 피처셋(X) 반환"""
         # 섹터 파생 지표 동적 추출
         sector_features = self._get_sector_derivative_features(df)
         
@@ -71,7 +65,6 @@ class FeatureSelector:
         # 실제 존재하는 컬럼만 필터링
         final_cols = [c for c in selected_features if c in df.columns]
         
-        X = df[final_cols]
-        y = df['target_return']
+        X = df[final_cols].select_dtypes(include=[np.number])
         
-        return X, y
+        return X
