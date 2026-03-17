@@ -71,7 +71,7 @@ def create_prediction_tables():
                 CREATE TABLE IF NOT EXISTS SHORT_LLM_TB (
                     pred_date DATE NOT NULL,
                     ticker VARCHAR(10) NOT NULL,
-                    interpretation TEXT,
+                    interpretation JSON,
                     PRIMARY KEY (pred_date, ticker),
                     FOREIGN KEY (ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                     ON DELETE CASCADE
@@ -85,7 +85,7 @@ def create_prediction_tables():
                 CREATE TABLE IF NOT EXISTS LONG_LLM_TB (
                     pred_date DATE NOT NULL,
                     ticker VARCHAR(10) NOT NULL,
-                    interpretation TEXT,
+                    interpretation JSON,
                     PRIMARY KEY (pred_date, ticker),
                     FOREIGN KEY (ticker) REFERENCES KOSPI200_STOCKS_TB(ticker)
                     ON DELETE CASCADE
