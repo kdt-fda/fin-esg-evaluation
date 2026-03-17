@@ -249,19 +249,25 @@ def run_long_term_pipeline():
     excess_ret_calib = df_m.loc[valid_calib_mask, "excess_ret"].values
     pred_scores_calib = ranker.predict(X_valid_calib)
     
-    valid_calib_idx = ~np.isnan(excess_ret_calib)
+    mask_calib = ~np.isnan(excess_ret_calib)
+    X_calib_final = pred_scores_calib[mask_calib].reshape(-1, 1)
+    y_calib_final = excess_ret_calib[mask_calib]
 
-    if valid_calib_idx.sum() > 50:
-        calibrator = LinearRegression().fit(
-            pred_scores_calib[valid_calib_idx].reshape(-1, 1), 
-            excess_ret_calib[valid_calib_idx]
-        )
+    # 캘리브레이터 초기화
+    calibrator = LinearRegression()
+
+    if len(y_calib_final) > 50:
+        # 최근 데이터가 충분한 경우
+        calibrator.fit(X_calib_final, y_calib_final)
     else:
+        # 최근 데이터가 충분하지 않은 경우 과거 Eval 데이터에서 결측치 제거 후 사용
         df_eval_clean = df_eval.dropna(subset=["pred_score", "excess_ret"])
-        calibrator = LinearRegression().fit(
-            df_eval_clean["pred_score"].values.reshape(-1, 1), 
-            df_eval_clean["excess_ret"].values
-        )
+        
+        if len(df_eval_clean) > 0:
+            calibrator.fit(
+                df_eval_clean["pred_score"].values.reshape(-1, 1), 
+                df_eval_clean["excess_ret"].values
+            )
 
     print(f"[5/6] {latest_date.date()} 기준 실전 추론 및 SHAP 요인 분석...")
     snapshot_mask = df_m["trade_date"] == latest_date
