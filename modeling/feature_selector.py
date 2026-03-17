@@ -1,5 +1,3 @@
-import numpy as np
-
 class FeatureSelector:
     def __init__(self):
         # 1. 공통 피쳐
@@ -65,6 +63,6 @@ class FeatureSelector:
         # 실제 존재하는 컬럼만 필터링
         final_cols = [c for c in selected_features if c in df.columns]
         
-        X = df[final_cols].select_dtypes(include=[np.number])
+        X = df[final_cols]
         
         return X
