@@ -4,10 +4,10 @@ import pandas as pd
 import numpy as np
 import pymysql
 import shap
+import concurrent.futures
 from dotenv import load_dotenv
 
 from xgboost import XGBRegressor
-from sklearn.multioutput import MultiOutputRegressor
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -17,7 +17,21 @@ from modeling.feature_selector import FeatureSelector
 load_dotenv()
 
 # =========================================================================
-# 1. 공통 유틸리티
+# 0. 판다스 날짜 에러 우회 패치
+# =========================================================================
+original_merge_asof = pd.merge_asof
+def patched_merge_asof(left, right, on=None, left_on=None, right_on=None, **kwargs):
+    if left_on and right_on:
+        left[left_on] = pd.to_datetime(left[left_on]).astype('datetime64[ns]')
+        right[right_on] = pd.to_datetime(right[right_on]).astype('datetime64[ns]')
+    elif on:
+        left[on] = pd.to_datetime(left[on]).astype('datetime64[ns]')
+        right[on] = pd.to_datetime(right[on]).astype('datetime64[ns]')
+    return original_merge_asof(left, right, on=on, left_on=left_on, right_on=right_on, **kwargs)
+pd.merge_asof = patched_merge_asof
+
+# =========================================================================
+# 1. 공통 유틸리티 (DB 연결)
 # =========================================================================
 def _connect():
     host = os.environ.get('DB_HOST')
@@ -27,23 +41,19 @@ def _connect():
     db_name = os.getenv('DB_NAME')
 
     conn = pymysql.connect(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=db_name
+        host=host, port=port, user=user, password=password,
+        database=db_name, connect_timeout=10
     )
-
     return conn
 
 def zfill6(x):
-    return x.astype(str).str.replace(r"\.0$", "", regex=True).str.replace("-", "", regex=False).str.strip().str.zfill(6)
+    return pd.Series(x).astype(str).str.replace(r"\.0$", "", regex=True).str.replace("-", "", regex=False).str.strip().str.zfill(6).values[0]
 
 # =========================================================================
-# 2. 단기 예측 메인 파이프라인
+# 2. 단기 궤적 예측 메인 파이프라인
 # =========================================================================
 def run_short_term_pipeline(win: int = 10, horizon: int = 20):
-    print("🚀 단기 예측 모델 파이프라인 가동...")
+    print("🚀 단기 예측 모델 파이프라인 가동 (GPU/병렬처리 적용)...")
     
     joiner = StockDataJoiner()
     selector = FeatureSelector()
@@ -52,6 +62,14 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
     conn = _connect()
     try:
         kospi_df = pd.read_sql("SELECT ticker, stock_name FROM KOSPI200_STOCKS_TB", conn)
+
+        # SHAP 분석 시 거시/공통 파생 지표 제외
+        macro_df = pd.read_sql("SELECT * FROM MACROECONOMICS_TB LIMIT 1", conn)
+        common_df = pd.read_sql("SELECT * FROM COMMON_TB LIMIT 1", conn)
+        
+        macro_cols = [c for c in macro_df.columns if c not in ['trade_date', 'date']]
+        common_cols = [c for c in common_df.columns if c not in ['trade_date', 'date']]
+        global_exclude_bases = set(macro_cols + common_cols + ['msci_event'])
     finally:
         conn.close()
     
@@ -67,33 +85,32 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
     print(f"[1/5] 총 {len(stock_names)}개 종목 데이터 병합 및 피처 세팅 중...")
     
     for s_name in stock_names:
-        # 1. Joiner로 기본 데이터 로드
+        # StockDataJoiner 호출
         df = joiner.get_modeling_dataset(s_name)
         
         if df is None or len(df) < win + horizon + 50:
             continue
             
-        ticker = zfill6(pd.Series([df['ticker'].iloc[0]]))[0]
+        ticker = zfill6([df['ticker'].iloc[0]])
         df = df.sort_values('trade_date').reset_index(drop=True)
         
         if latest_date is None or df['trade_date'].max() > latest_date:
             latest_date = df['trade_date'].max()
             
-        # 2. 20일치 궤적 타겟 동시 생성
+        # 20일치 타겟 동시 생성
         target_cols = []
         for i in range(1, horizon + 1):
             col_name = f'target_{i}d'
             df[col_name] = df['close'].shift(-i) / df['close'] - 1.0
             target_cols.append(col_name)
 
-        # 3. FeatureSelector로 필요한 변수만 추출
+        # FeatureSelector 호출
         X_base_raw = selector.get_features(df, mode='short')
         X_base_raw = X_base_raw.replace([np.inf, -np.inf], np.nan).ffill().fillna(0)
         
-        # 4. Lag 피처 생성
+        # Lag 피처 생성
         X_lag = pd.concat([X_base_raw.shift(lag).add_suffix(f"_lag{lag}") for lag in range(win)], axis=1)
         
-        # 실전 추론용(최신일자) 데이터 저장
         inf_X_list.append(X_lag.iloc[[-1]])
         inf_ticker_list.append(ticker)
         
@@ -130,20 +147,59 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
     base_test = pd.concat(global_base_te, axis=0).reset_index(drop=True)
     X_inf = pd.concat(inf_X_list, axis=0).reset_index(drop=True)
 
-    print(f"[2/5] MultiOutput XGBoost 학습 시작 (학습 샘플: {len(X_train)}건)...")
-    base_model = XGBRegressor(
-        n_estimators=200, max_depth=4, learning_rate=0.03,
-        subsample=0.8, colsample_bytree=0.8, objective="reg:squarederror", 
-        random_state=42, n_jobs=-1
-    )
-    multi_model = MultiOutputRegressor(base_model)
-    multi_model.fit(X_train, y_train)
+    # ---------------------------------------------------------
+    # GPU 감지 및 모델 병렬 학습 (Multi-threading)
+    # ---------------------------------------------------------
+    print(f"[2/5] XGBoost GPU 감지 및 {horizon}개 모델 병렬 학습 시작 (학습 샘플: {len(X_train)}건)...")
+    
+    use_gpu = False
+    params = {
+        "n_estimators": 200, "max_depth": 4, "learning_rate": 0.03,
+        "subsample": 0.8, "colsample_bytree": 0.8, "objective": "reg:squarederror", 
+        "random_state": 42
+    }
+    
+    # GPU(CUDA) 테스트
+    try:
+        tmp = XGBRegressor(tree_method='hist', device='cuda', n_estimators=1)
+        tmp.fit(np.array([[0.0]]), np.array([0.0]))
+        use_gpu = True
+        params['tree_method'] = 'hist'
+        params['device'] = 'cuda'
+        print("  -> CUDA GPU 가속 활성화됨!")
+    except Exception:
+        params['tree_method'] = 'hist' 
+        print("  -> CPU 모드로 학습 진행.")
 
+    # 스레드 동적 할당
+    cpu_cores = os.cpu_count() or 4
+    max_workers = 4 if use_gpu else min(4, max(1, cpu_cores // 2))
+    params['n_jobs'] = max(1, cpu_cores // max_workers) if not use_gpu else -1
+    
+    models = [None] * horizon
+
+    def train_target_model(h):
+        # h번째 타겟을 맞히는 전용 모델 생성
+        m = XGBRegressor(**params)
+        m.fit(X_train, y_train.iloc[:, h])
+        return h, m
+
+    # 병렬 처리로 20개 모델 동시 학습
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(train_target_model, h) for h in range(horizon)]
+        for future in concurrent.futures.as_completed(futures):
+            h, m = future.result()
+            models[h] = m
+
+    # ---------------------------------------------------------
+    # 백테스트 및 추론, DB 적재
+    # ---------------------------------------------------------
     print("[3/5] Test Set 기반 백테스트 및 신뢰도(Confidence) 산출 중...")
-    pred_all_te = multi_model.predict(X_test)
+    # 20개 모델의 예측값을 옆으로 이어 붙임 (MultiOutputRegressor와 동일한 형태)
+    pred_all_te = np.column_stack([m.predict(X_test) for m in models])
     
     pred_ret_20d = pred_all_te[:, -1] 
-    act_ret_20d = y_test[f'target_{horizon}d'].values
+    act_ret_20d = y_test.iloc[:, -1].values
     
     pred_prices_te = base_test.values * (1.0 + pred_ret_20d)
     act_prices_te = base_test.values * (1.0 + act_ret_20d)
@@ -169,9 +225,10 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
     df_conf = pd.DataFrame(conf_list).set_index('ticker')
 
     print(f"[4/5] {latest_date.date()} 기준 실전 추론 및 SHAP 요인 분석...")
-    inf_preds_20d = multi_model.predict(X_inf) * 100
+    inf_preds_20d = np.column_stack([m.predict(X_inf) for m in models]) * 100
     
-    explainer = shap.TreeExplainer(multi_model.estimators_[-1])
+    # SHAP는 20일 차 모델(models[-1]) 기준으로 분석
+    explainer = shap.TreeExplainer(models[-1])
     shap_values = explainer.shap_values(X_inf)
     
     db_insert_data = []
@@ -184,7 +241,9 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
         agg_shap = {}
         for j, f_name in enumerate(X_inf.columns):
             base_f = f_name.split('_lag')[0]
-            agg_shap[base_f] = agg_shap.get(base_f, 0) + sv[j]
+            # 거시경제 지표나 공통 파생 지표는 SHAP Top 요인에서 제외
+            if base_f not in global_exclude_bases:
+                agg_shap[base_f] = agg_shap.get(base_f, 0) + sv[j]
             
         positive_features = {k: v for k, v in agg_shap.items() if v > 0}
         sorted_features = sorted(positive_features.items(), key=lambda item: item[1], reverse=True)[:5]
