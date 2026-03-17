@@ -95,7 +95,7 @@ def run_total_update_process():
 
 if __name__ == "__main__":
     schedule.every().day.at("22:30").do(run_total_update_process)
-    logging.info("⏰ 스케줄러 활성화: 매일 22:30에 업데이트를 시작합니다.")
+    logging.info("⏰ 수집기 스케줄러: 매일 22:30에 업데이트를 시작합니다.")
 
     while True:
         schedule.run_pending()
