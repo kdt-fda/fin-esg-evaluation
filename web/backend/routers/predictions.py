@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
+import json
 import pandas as pd
 
 from db.database import get_connection
@@ -28,27 +29,24 @@ def _safe_float(value):
     return float(value)
 
 
-def _calc_short_confidence(da, mape) -> float:
-    da_val = _safe_float(da) or 0.0
-    mape_val = _safe_float(mape) or 0.0
-
-    score = (da_val * 0.6) + (max(0.0, 100.0 - mape_val) * 0.4)
-    return round(score, 2)
-
-
-def _calc_long_confidence(hr, ic, da) -> float:
-    hr_val = _safe_float(hr) or 0.0
-    ic_val = _safe_float(ic) or 0.0
-    da_val = _safe_float(da) or 0.0
-
-    score = (hr_val * 0.4) + (ic_val * 0.35) + (da_val * 0.25)
-    return round(score, 2)
+def _safe_json(value):
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except Exception:
+            return value
+    return value
 
 
 # -----------------------------
 # SHORT TERM
 # 실제 종가(STOCK_TB.close)는 /stocks/{code}/prices 에서 별도 조회
 # 여기서는 단기 예측(SHORT_PRED_TB) + 설명(SHORT_LLM_TB) + confidence 반환
+# confidence는 DB의 conf_score 사용
 # -----------------------------
 @router.get("/short")
 def predict_short(
@@ -59,20 +57,19 @@ def predict_short(
         with conn.cursor() as cur:
             sql = """
                 SELECT
-                    p.trade_date      AS trade_date,
+                    p.pred_date       AS pred_date,
                     p.prediction      AS predicted_value,
                     p.shap_feature    AS shap_feature,
                     p.shap_value      AS shap_value,
-                    p.DA              AS da,
-                    p.MAPE            AS mape,
+                    p.conf_score      AS conf_score,
                     l.interpretation  AS interpretation
                 FROM SHORT_PRED_TB p
                 LEFT JOIN SHORT_LLM_TB l
-                    ON p.trade_date = l.trade_date
+                    ON p.pred_date = l.pred_date
                    AND p.ticker = l.ticker
                 WHERE p.ticker = %s
-                  AND p.trade_date >= CURDATE()
-                ORDER BY p.trade_date ASC
+                  AND p.pred_date >= CURDATE()
+                ORDER BY p.pred_date ASC
                 LIMIT 20
             """
 
@@ -90,29 +87,39 @@ def predict_short(
 
             for r in rows:
                 point = {
-                    "date": _to_ymd(r["trade_date"]),
-                    "predicted": _safe_float(r["predicted_value"]),
+                    "date": _to_ymd(r["pred_date"]),
+                    "predicted": _safe_json(r["predicted_value"]),
                 }
 
-                if r["shap_feature"] is not None and r["shap_value"] is not None:
-                    point["reason"] = [
-                        {
-                            "factor": str(r["shap_feature"]),
-                            "impact": r["interpretation"] or "",
-                            "contribution": _safe_float(r["shap_value"]),
-                        }
-                    ]
+                shap_feature = _safe_json(r["shap_feature"])
+                shap_value = _safe_json(r["shap_value"])
+
+                if shap_feature is not None or shap_value is not None:
+                    # shap_feature/shap_value가 JSON 배열일 수도 있고 단일값일 수도 있으니 유연하게 처리
+                    if isinstance(shap_feature, list) and isinstance(shap_value, list):
+                        reason = []
+                        for feature, contribution in zip(shap_feature, shap_value):
+                            reason.append({
+                                "factor": str(feature),
+                                "impact": r["interpretation"] or "",
+                                "contribution": _safe_float(contribution),
+                            })
+                        point["reason"] = reason
+                    else:
+                        point["reason"] = [
+                            {
+                                "factor": str(shap_feature) if shap_feature is not None else "",
+                                "impact": r["interpretation"] or "",
+                                "contribution": _safe_float(shap_value),
+                            }
+                        ]
 
                 if r["interpretation"]:
                     point["changeReason"] = r["interpretation"]
 
                 data.append(point)
 
-            # 같은 배치의 예측이면 DA/MAPE가 동일하거나 매우 유사하다고 보고 첫 row 기준 사용
-            confidence = _calc_short_confidence(
-                rows[0].get("da"),
-                rows[0].get("mape"),
-            )
+            confidence = _safe_float(rows[0].get("conf_score")) or 0
 
             return {
                 "confidence": confidence,
@@ -128,7 +135,7 @@ def predict_short(
 # LONG TERM
 # 선택 종목의 섹터를 찾고,
 # 같은 섹터에 속한 모든 종목의 LONG_PRED_TB.score 반환
-# confidence는 선택 종목의 최신 DA/HR/IC 기준으로 계산
+# confidence는 선택 종목의 최신 conf_score 사용
 # -----------------------------
 @router.get("/long")
 def predict_long(
@@ -180,17 +187,17 @@ def predict_long(
                     SELECT
                         p1.ticker,
                         p1.score,
-                        p1.trade_date
+                        p1.pred_date
                     FROM LONG_PRED_TB p1
                     INNER JOIN (
                         SELECT
                             ticker,
-                            MAX(trade_date) AS max_trade_date
+                            MAX(pred_date) AS max_pred_date
                         FROM LONG_PRED_TB
                         GROUP BY ticker
                     ) latest
                         ON p1.ticker = latest.ticker
-                       AND p1.trade_date = latest.max_trade_date
+                       AND p1.pred_date = latest.max_pred_date
                 ) lp
                     ON k.ticker = lp.ticker
                 WHERE k.sector_code = %s
@@ -212,27 +219,20 @@ def predict_long(
                     "score": _safe_float(r["score"]),
                 })
 
-            # 선택 종목의 최신 confidence용 지표 조회
+            # 선택 종목의 최신 conf_score 조회
             confidence_sql = """
                 SELECT
-                    p.DA AS da,
-                    p.HR AS hr,
-                    p.IC AS ic
+                    p.conf_score AS conf_score
                 FROM LONG_PRED_TB p
                 WHERE p.ticker = %s
-                ORDER BY p.trade_date DESC
+                ORDER BY p.pred_date DESC
                 LIMIT 1
             """
             cur.execute(confidence_sql, [code])
             confidence_row = cur.fetchone()
 
-            if confidence_row:
-                confidence = _calc_long_confidence(
-                    confidence_row.get("hr"),
-                    confidence_row.get("ic"),
-                    confidence_row.get("da"),
-                )
-            else:
+            confidence = _safe_float(confidence_row.get("conf_score")) if confidence_row else 0
+            if confidence is None:
                 confidence = 0
 
             return {

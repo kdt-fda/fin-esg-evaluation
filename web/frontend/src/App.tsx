@@ -317,7 +317,6 @@ export default function App() {
               title="중장기 투자 매력도 랭킹"
               confidence={longConfidence}
               currentSector={selectedStock?.sector ?? '-'}
-              selectedStockName={selectedStock?.name ?? '-'}
               selectedStockCode={selectedStock?.code ?? '-'}
               data={longTermData}
             />

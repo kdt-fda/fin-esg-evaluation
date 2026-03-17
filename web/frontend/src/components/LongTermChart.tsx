@@ -20,12 +20,11 @@ interface GrowthRankingChartProps {
   title: string;
   confidence: number;
   currentSector: string;
-  selectedStockName : string;
   selectedStockCode : string; 
   data?: LongTermItem[]; 
 }
 
-export default function GrowthRankingChart({ title, confidence, currentSector, selectedStockName, selectedStockCode, data }: GrowthRankingChartProps) {
+export default function GrowthRankingChart({ title, confidence, currentSector, selectedStockCode, data }: GrowthRankingChartProps) {
   const [showInfoModal, setShowInfoModal] = useState(false);
   const normalizedConfidence = useMemo(() => {
     if (!Number.isFinite(confidence)) return 0;
