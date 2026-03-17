@@ -15,8 +15,6 @@ services:
       - ./logs:/app/logs
     tty: true
     stdin_open: true
-    tty: true
-    stdin_open: true
 
   analyzer:
     build:
