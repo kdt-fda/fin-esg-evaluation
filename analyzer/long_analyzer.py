@@ -257,9 +257,10 @@ def run_long_term_pipeline():
             excess_ret_calib[valid_calib_idx]
         )
     else:
+        df_eval_clean = df_eval.dropna(subset=["pred_score", "excess_ret"])
         calibrator = LinearRegression().fit(
-            df_eval["pred_score"].values.reshape(-1, 1), 
-            df_eval["excess_ret"].values
+            df_eval_clean["pred_score"].values.reshape(-1, 1), 
+            df_eval_clean["excess_ret"].values
         )
 
     print(f"[5/6] {latest_date.date()} 기준 실전 추론 및 SHAP 요인 분석...")
