@@ -27,8 +27,8 @@ pandas_market_calendars==5.3.0
 torch==2.10.0
 transformers==5.2.0
 pytorch-tabnet==4.1.0
-xgboost
+xgboost==2.0.3
+shap==0.45.0
 scikit-learn
 scipy
-shap
 SQLAlchemy
