@@ -1,10 +1,10 @@
 import os
 import json
-import pandas as pd
 import numpy as np
+import pandas as pd
 import pymysql
-import shap
 import scipy.stats as stats
+import shap
 from dotenv import load_dotenv
 
 from xgboost import XGBRanker
@@ -12,12 +12,26 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LinearRegression
 
 import warnings
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
 from modeling.data_joiner import StockDataJoiner
 from modeling.feature_selector import FeatureSelector
 
 load_dotenv()
+
+# =========================================================================
+# 0. 판다스 날짜 에러 우회 패치
+# =========================================================================
+original_merge_asof = pd.merge_asof
+def patched_merge_asof(left, right, on=None, left_on=None, right_on=None, **kwargs):
+    if left_on and right_on:
+        left[left_on] = pd.to_datetime(left[left_on]).astype('datetime64[ns]')
+        right[right_on] = pd.to_datetime(right[right_on]).astype('datetime64[ns]')
+    elif on:
+        left[on] = pd.to_datetime(left[on]).astype('datetime64[ns]')
+        right[on] = pd.to_datetime(right[on]).astype('datetime64[ns]')
+    return original_merge_asof(left, right, on=on, left_on=left_on, right_on=right_on, **kwargs)
+pd.merge_asof = patched_merge_asof
 
 # =========================================================================
 # 1. 공통 유틸리티
@@ -30,17 +44,13 @@ def _connect():
     db_name = os.getenv('DB_NAME')
 
     conn = pymysql.connect(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=db_name
+        host=host, port=port, user=user, password=password,
+        database=db_name, connect_timeout=10
     )
-
     return conn
 
 def zfill6(x):
-    return x.astype(str).str.replace(r"\.0$", "", regex=True).str.replace("-", "", regex=False).str.strip().str.zfill(6)
+    return pd.Series(x).astype(str).str.replace(r"\.0$", "", regex=True).str.replace("-", "", regex=False).str.strip().str.zfill(6).values[0]
 
 def get_trade_calendar(dates: pd.Series) -> np.ndarray:
     cal = pd.to_datetime(dates, errors="coerce").dropna().unique()
@@ -61,7 +71,7 @@ def safe_mean(values, default=0.0):
 def evaluate_rank_metrics(df_eval: pd.DataFrame, top_k: int = 20, min_stocks: int = 40):
     daily_ic, long_short_spreads, topk_hit_rates, daily_accuracies = [], [], [], []
 
-    for date, group in df_eval.groupby("Date"):
+    for date, group in df_eval.groupby("trade_date"):
         n_stocks = len(group)
         if n_stocks < min_stocks: continue
 
@@ -92,17 +102,16 @@ def evaluate_rank_metrics(df_eval: pd.DataFrame, top_k: int = 20, min_stocks: in
 
 def build_confidence_scores(df_eval: pd.DataFrame, min_obs: int = 20):
     confidence_records = []
-    for ticker, group in df_eval.groupby("Ticker"):
+    for ticker, group in df_eval.groupby("ticker"):
         if len(group) < min_obs: continue
 
         mean_rank_error = group["rank_error"].mean()
         rank_acc_score = (1.0 - mean_rank_error) * 100
 
+        ic = 0
         if group["pred_score"].nunique() > 1 and group["excess_ret"].nunique() > 1:
             ic, _ = stats.spearmanr(group["pred_score"], group["excess_ret"])
             ic = 0 if np.isnan(ic) else ic
-        else:
-            ic = 0
 
         ts_ic_score = max(0, ic * 100)
         raw_conf_score = (rank_acc_score * 0.6) + (ts_ic_score * 0.4)
@@ -110,202 +119,203 @@ def build_confidence_scores(df_eval: pd.DataFrame, min_obs: int = 20):
         shrink = min(1.0, len(group) / 60.0)
         conf_score = shrink * raw_conf_score + (1.0 - shrink) * 50.0
 
-        confidence_records.append({"Ticker": ticker, "conf_score": conf_score})
-    return pd.DataFrame(confidence_records).set_index("Ticker")
+        confidence_records.append({"ticker": ticker, "conf_score": conf_score})
+    return pd.DataFrame(confidence_records).set_index("ticker")
 
 # =========================================================================
-# 3. 중장기 랭킹 메인 파이프라인
+# 3. 메인 파이프라인
 # =========================================================================
 def run_long_term_pipeline():
     H_VAL = 189
-    print(f"\n[시스템] AI 중장기 랭킹 모델({H_VAL}일 예측) 파이프라인 가동...")
+    print(f"🚀 중장기 예측 모델 파이프라인 가동...")
 
     joiner = StockDataJoiner()
     selector = FeatureSelector()
 
-    # 1. KOSPI 200 종목 가져오기
     conn = _connect()
     try:
         kospi_df = pd.read_sql("SELECT ticker, stock_name FROM KOSPI200_STOCKS_TB", conn)
+
+        # SHAP 분석 시 거시/공통 파생 지표 제외
+        macro_df = pd.read_sql("SELECT * FROM MACROECONOMICS_TB LIMIT 1", conn)
+        common_df = pd.read_sql("SELECT * FROM COMMON_TB LIMIT 1", conn)
+        
+        macro_cols = [c for c in macro_df.columns if c not in ['trade_date', 'date']]
+        common_cols = [c for c in common_df.columns if c not in ['trade_date', 'date']]
+        global_exclude_bases = set(macro_cols + common_cols + ['msci_event'])
     finally:
         conn.close()
 
-    stock_names = kospi_df['stock_name'].dropna().unique()
-    mega_df_list = []
+    print(f"[1/6] 총 {len(kospi_df)}개 종목 데이터 병합 및 피처 세팅 중...")
+    all_dfs = []
     latest_date = None
 
-    print(f"[1/5] 총 {len(stock_names)}개 종목 데이터 병합 중...")
-    
-    for s_name in stock_names:
+    for s_name in kospi_df['stock_name']:
+        # StockDataJoiner 호출
         df = joiner.get_modeling_dataset(s_name)
+
         if df is None or len(df) < H_VAL + 50:
             continue
-            
-        df['Ticker'] = zfill6([df['ticker'].iloc[0]])
-        df['Date'] = pd.to_datetime(df['trade_date'])
         
-        if latest_date is None or df['Date'].max() > latest_date:
-            latest_date = df['Date'].max()
-            
-        mega_df_list.append(df)
+        ticker = zfill6([df['ticker'].iloc[0]])
+        df['ticker'] = ticker
+        df['trade_date'] = pd.to_datetime(df['trade_date'])
+        
+        if latest_date is None or df['trade_date'].max() > latest_date:
+            latest_date = df['trade_date'].max()
 
-    mega_df = pd.concat(mega_df_list, ignore_index=True)
-    mega_df = mega_df.sort_values(['Ticker', 'Date']).reset_index(drop=True)
+        # FeatureSelector 호출
+        df = selector.get_features(df, mode='long')
 
-    print(f"[2/5] 횡단면 초과수익률(Target) 및 피처 세팅 중...")
-    # 타겟(189일 초과 수익률 및 relevance) 생성
-    mega_df['raw_ret'] = mega_df.groupby('Ticker')['close'].shift(-H_VAL) / mega_df['close'] - 1.0
-    mega_df['market_median'] = mega_df.groupby('Date')['raw_ret'].transform('median')
-    mega_df['excess_ret'] = mega_df['raw_ret'] - mega_df['market_median']
+        all_dfs.append(df)
 
-    valid_mask = mega_df['excess_ret'].notna()
-    mega_df.loc[valid_mask, 'relevance'] = mega_df[valid_mask].groupby('Date')['excess_ret'].transform(
+    if not all_dfs:
+        print("❌ 수집된 데이터가 없습니다.")
+        return
+
+    df_m = pd.concat(all_dfs, ignore_index=True)
+    df_m = df_m.sort_values(["trade_date", "ticker"]).reset_index(drop=True)
+
+    print("[2/6] 추가 지표 및 엠바고 타겟 계산 중...")
+    
+    # 모멘텀, 외인지배력 별도 계산
+    df_m["mom_1m"] = df_m.groupby("ticker")["close"].pct_change(20)
+    df_m["mom_1_6"] = df_m.groupby("ticker")["close"].shift(20) / df_m.groupby("ticker")["close"].shift(120) - 1
+    df_m["mom_7_12"] = df_m.groupby("ticker")["close"].shift(120) / df_m.groupby("ticker")["close"].shift(250) - 1
+    
+    df_m["rank_mom_7_12"] = df_m.groupby("trade_date")["mom_7_12"].rank(pct=True)
+    df_m["rank_mom_1_6"] = df_m.groupby("trade_date")["mom_1_6"].rank(pct=True)
+
+    if "foreign_net_amt" in df_m.columns and "volume" in df_m.columns:
+        df_m["foreign_dominance"] = df_m["foreign_net_amt"] / ((df_m["volume"] * df_m["close"]) + 1)
+    else:
+        df_m["foreign_dominance"] = np.nan
+
+    # 타겟 생성
+    df_m["raw_ret"] = df_m.groupby("ticker")["close"].shift(-H_VAL) / df_m["close"] - 1.0
+    df_m["market_median"] = df_m.groupby("trade_date")["raw_ret"].transform("median")
+    df_m["excess_ret"] = df_m["raw_ret"] - df_m["market_median"]
+
+    mask_valid_target = df_m["excess_ret"].notna()
+    df_m.loc[mask_valid_target, "relevance"] = df_m[mask_valid_target].groupby("trade_date")["excess_ret"].transform(
         lambda x: pd.qcut(x, 5, labels=False, duplicates="drop")
-    ).fillna(0).astype(int)
+    )
+    df_m["relevance"] = df_m["relevance"].fillna(0).astype(int)
 
-    # FeatureSelector로 학습용 피처만 추출
-    X_raw = selector.get_features(mega_df, mode='long')
-    feat_cols = X_raw.columns.tolist()
+    df_m = df_m.replace([np.inf, -np.inf], np.nan)
 
-    # 엠바고 및 구간 분할
-    unique_trading_days = get_trade_calendar(mega_df["Date"])
+    ignore_cols = {"close", "raw_ret", "market_median", "excess_ret", "relevance", "trade_date", "ticker", "stock_name"}
+    feats = [c for c in df_m.columns if c not in ignore_cols and pd.api.types.is_numeric_dtype(df_m[c])]
+    X_raw = df_m[feats]
+
+    print("[3/6] 엠바고 스플릿 및 XGBRanker 학습 중...")
+    unique_trading_days = get_trade_calendar(df_m["trade_date"])
     valid_idx = int(len(unique_trading_days) * 0.8)
-    if valid_idx == 0 or valid_idx >= len(unique_trading_days):
-        raise ValueError("[오류] 학습을 위한 데이터가 충분하지 않습니다.")
-
+    
     valid_start_date = pd.to_datetime(unique_trading_days[valid_idx])
     embargo_limit = get_embargo_limit(unique_trading_days, valid_idx, H_VAL)
-
+    
     valid_dates = unique_trading_days[valid_idx:]
     split_idx = int(len(valid_dates) * 0.5)
     valid_eval_end_date = pd.to_datetime(valid_dates[split_idx - 1])
 
-    train_mask = mega_df["Date"] <= embargo_limit
-    valid_eval_mask = (mega_df["Date"] >= valid_start_date) & (mega_df["Date"] <= valid_eval_end_date)
-    valid_calib_mask = mega_df["Date"] > valid_eval_end_date
+    train_mask = df_m["trade_date"] <= embargo_limit
+    valid_eval_mask = (df_m["trade_date"] >= valid_start_date) & (df_m["trade_date"] <= valid_eval_end_date)
+    valid_calib_mask = df_m["trade_date"] > valid_eval_end_date
 
     imputer = SimpleImputer(strategy="median", add_indicator=True)
-    
-    # Train
     X_train = imputer.fit_transform(X_raw.loc[train_mask])
-    y_train = mega_df.loc[train_mask, "relevance"].values
-    qid_train = pd.factorize(mega_df.loc[train_mask, "Date"])[0]
+    y_train_rel = df_m.loc[train_mask, "relevance"].values
+    qid_train = pd.factorize(pd.to_datetime(df_m.loc[train_mask, "trade_date"]))[0]
 
-    # Eval
     X_valid_eval = imputer.transform(X_raw.loc[valid_eval_mask])
-    y_valid_eval = mega_df.loc[valid_eval_mask, "relevance"].values
-    qid_valid_eval = pd.factorize(mega_df.loc[valid_eval_mask, "Date"])[0]
+    y_valid_eval_rel = df_m.loc[valid_eval_mask, "relevance"].values
+    qid_valid_eval = pd.factorize(pd.to_datetime(df_m.loc[valid_eval_mask, "trade_date"]))[0]
 
-    # Calib
-    X_valid_calib = imputer.transform(X_raw.loc[valid_calib_mask])
-    excess_ret_valid_calib = mega_df.loc[valid_calib_mask, "excess_ret"].values
+    ranker = XGBRanker(n_estimators=300, learning_rate=0.03, max_depth=4, objective="rank:pairwise", subsample=0.8, colsample_bytree=0.8, random_state=42, n_jobs=-1, tree_method='hist')
+    ranker.fit(X_train, y_train_rel, qid=qid_train, eval_set=[(X_valid_eval, y_valid_eval_rel)], eval_qid=[qid_valid_eval], verbose=False)
 
-    print("[3/5] XGBRanker 학습 시작...")
-    ranker = XGBRanker(
-        n_estimators=300, max_depth=4, learning_rate=0.03,
-        objective="rank:pairwise", subsample=0.8, colsample_bytree=0.8,
-        random_state=42, n_jobs=-1
-    )
-    ranker.fit(
-        X_train, y_train, qid=qid_train,
-        eval_set=[(X_valid_eval, y_valid_eval)], eval_qid=[qid_valid_eval],
-        verbose=False
-    )
-
-    print("[4/5] 백테스트 평가 및 실전 기대수익률 보정(Calibrator)...")
-    pred_scores_eval = ranker.predict(X_valid_eval)
-    df_eval = pd.DataFrame({
-        "Date": mega_df.loc[valid_eval_mask, "Date"].values,
-        "Ticker": mega_df.loc[valid_eval_mask, "Ticker"].values,
-        "pred_score": pred_scores_eval,
-        "excess_ret": mega_df.loc[valid_eval_mask, "excess_ret"].values
-    })
-
-    # 시장 전체 성능 지표 계산
-    market_metrics = evaluate_rank_metrics(df_eval, top_k=20, min_stocks=40)
-
-    # 개별 종목 신뢰도 계산
-    df_eval["pred_pct"] = df_eval.groupby("Date")["pred_score"].rank(pct=True)
-    df_eval["actual_pct"] = df_eval.groupby("Date")["excess_ret"].rank(pct=True)
+    print("[4/6] 성능 평가 및 기대수익률 캘리브레이션...")
+    df_eval = df_m.loc[valid_eval_mask, ["trade_date", "ticker", "excess_ret"]].copy()
+    df_eval["pred_score"] = ranker.predict(X_valid_eval)
+    metrics = evaluate_rank_metrics(df_eval, top_k=20, min_stocks=40)
+    
+    df_eval["pred_pct"] = df_eval.groupby("trade_date")["pred_score"].rank(pct=True)
+    df_eval["actual_pct"] = df_eval.groupby("trade_date")["excess_ret"].rank(pct=True)
     df_eval["rank_error"] = (df_eval["pred_pct"] - df_eval["actual_pct"]).abs()
     df_stock_conf = build_confidence_scores(df_eval, min_obs=20)
 
-    # 기대수익률(Alpha) 캘리브레이션
+    X_valid_calib = imputer.transform(X_raw.loc[valid_calib_mask])
+    excess_ret_calib = df_m.loc[valid_calib_mask, "excess_ret"].values
     pred_scores_calib = ranker.predict(X_valid_calib)
-    calibrator = LinearRegression().fit(pred_scores_calib.reshape(-1, 1), excess_ret_valid_calib)
+    calibrator = LinearRegression().fit(pred_scores_calib.reshape(-1, 1), excess_ret_calib)
 
-    # 최신 일자 추론 (Inference)
-    snapshot_mask = mega_df["Date"] == latest_date
-    X_inf_raw = X_raw.loc[snapshot_mask]
-    tickers_inf = mega_df.loc[snapshot_mask, "Ticker"].values
+    print(f"[5/6] {latest_date.date()} 기준 실전 추론 및 SHAP 요인 분석...")
+    snapshot_mask = df_m["trade_date"] == latest_date
+    df_inf = df_m.loc[snapshot_mask].copy()
+    X_inf_imputed = imputer.transform(X_raw.loc[snapshot_mask])
     
-    X_inf_imputed = imputer.transform(X_inf_raw)
     raw_scores = ranker.predict(X_inf_imputed)
-    predicted_alpha = calibrator.predict(raw_scores.reshape(-1, 1)) * 100 # % 단위
+    predicted_alpha = calibrator.predict(raw_scores.reshape(-1, 1)) * 100
+    df_inf["Expected_Return(%)"] = predicted_alpha
 
-    # 매력도 점수 변환 (0~100점)
-    return_scores = pd.Series(predicted_alpha).rank(pct=True).values * 100
+    df_inf = df_inf.merge(df_stock_conf, on="ticker", how="left")
+    df_inf["Confidence_Score"] = df_inf["conf_score"].fillna(50.0)
+    df_inf["Return_Score"] = df_inf["Expected_Return(%)"].rank(pct=True) * 100
+    df_inf["Attractiveness_Score"] = (df_inf["Return_Score"] * 0.5) + (df_inf["Confidence_Score"] * 0.5)
 
-    print(f"[5/5] {latest_date.date()} 기준 SHAP 추출 및 LONG_PRED_TB 적재 중...")
     explainer = shap.TreeExplainer(ranker)
-    shap_values = explainer.shap_values(X_inf_imputed)
-    updated_feat_cols = imputer.get_feature_names_out(feat_cols)
-    
-    # 매크로/공통 변수를 제외하고 순수 기업 지표만 뽑기 위한 필터
-    macro_prefixes = ('us_', 'kr_', 'ktb', 'jpy', 'rate_diff', 'mkt_', 'wti', 'brent', 'usdkrw', 'cli')
+    updated_feat_cols = imputer.get_feature_names_out(feats)
+    shap_values = explainer.shap_values(pd.DataFrame(X_inf_imputed, columns=updated_feat_cols))
 
     db_insert_data = []
-    for i, ticker in enumerate(tickers_inf):
+    
+    for i, (_, row) in enumerate(df_inf.iterrows()):
+        ticker = row['ticker']
         sv = shap_values[i]
         
-        valid_pos = {}
+        agg_shap = {}
         for j, fname in enumerate(updated_feat_cols):
             base_fname = fname.replace("missingindicator_", "")
-            # SHAP 값이 양수이고 매크로 변수가 아닌 경우만 필터링
-            if sv[j] > 0 and not base_fname.startswith(macro_prefixes):
-                valid_pos[base_fname] = valid_pos.get(base_fname, 0) + sv[j]
-                
-        sorted_features = sorted(valid_pos.items(), key=lambda item: item[1], reverse=True)[:5]
-        top_feat_names = [item[0] for item in sorted_features]
-        top_feat_vals = [round(float(item[1]), 4) for item in sorted_features]
+            if base_fname not in global_exclude_bases:
+                agg_shap[base_fname] = agg_shap.get(base_fname, 0) + sv[j]
         
-        # 신뢰도 (데이터 부족한 경우 디폴트로 50점 부여)
-        conf = df_stock_conf.loc[ticker, "conf_score"] if ticker in df_stock_conf.index else 50.0
+        # 긍정 Top 3 / 부정 Top 3
+        pos_feats = sorted([(k, v) for k, v in agg_shap.items() if v > 0], key=lambda x: x[1], reverse=True)[:3]
+        neg_feats = sorted([(k, v) for k, v in agg_shap.items() if v < 0], key=lambda x: x[1])[:3]
         
-        # 최종 투자 매력도 산출 (기대수익률 점수 50% + 신뢰도 50%)
-        attractiveness_score = (return_scores[i] * 0.5) + (conf * 0.5)
+        combined_feats = pos_feats + neg_feats
+        top_feat_names = [item[0] for item in combined_feats]
+        top_feat_vals = [round(float(item[1]), 4) for item in combined_feats]
 
-        db_insert_data.append(
-            (
-                latest_date.date(), ticker,
-                round(float(predicted_alpha[i]), 4), # expected_return
-                round(float(attractiveness_score), 4), # score
-                json.dumps(top_feat_names), json.dumps(top_feat_vals),
-                market_metrics['dir_acc'], market_metrics['hit_rate'], 
-                market_metrics['rank_ic'], market_metrics['ls_spread'], 
-                round(float(conf), 4)
-            )
-        )
+        exp_ret = round(float(row['Expected_Return(%)']), 4)
+        score = round(float(row['Attractiveness_Score']), 4)
+        conf_val = round(float(row['Confidence_Score']), 4)
 
-    # DB 최종 적재
+        db_insert_data.append((
+            latest_date.date(), ticker, exp_ret, score, 
+            json.dumps(top_feat_names), json.dumps(top_feat_vals),
+            metrics['dir_acc'], metrics['hit_rate'], metrics['rank_ic'], metrics['ls_spread'], conf_val
+        ))
+
+    print(f"[6/6] LONG_PRED_TB 적재 중... (총 {len(db_insert_data)}건)")
     conn = _connect()
     try:
         cur = conn.cursor()
         sql = """
             INSERT INTO LONG_PRED_TB (
-                pred_date, ticker, expected_return, score, shap_feature, shap_value, 
+                pred_date, ticker, expected_ret, score, shap_feature, shap_value, 
                 dir_acc, hit_rate, rank_ic, ls_spread, conf_score
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
-                expected_return=VALUES(expected_return), score=VALUES(score),
+                expected_ret=VALUES(expected_ret), score=VALUES(score),
                 shap_feature=VALUES(shap_feature), shap_value=VALUES(shap_value),
                 dir_acc=VALUES(dir_acc), hit_rate=VALUES(hit_rate),
-                rank_ic=VALUES(rank_ic), ls_spread=VALUES(ls_spread),
-                conf_score=VALUES(conf_score);
+                rank_ic=VALUES(rank_ic), ls_spread=VALUES(ls_spread), conf_score=VALUES(conf_score);
         """
         cur.executemany(sql, db_insert_data)
         conn.commit()
-        print(f"✅ LONG_PRED_TB 업데이트 완벽 성공! (총 {len(db_insert_data)}건)")
+        print("✅ 장기 예측 결과 업데이트 완료")
     except Exception as e:
         print(f"❌ DB 적재 오류: {e}")
         conn.rollback()
