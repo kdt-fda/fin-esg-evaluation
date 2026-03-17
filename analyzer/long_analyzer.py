@@ -255,19 +255,28 @@ def run_long_term_pipeline():
 
     # 캘리브레이터 초기화
     calibrator = LinearRegression()
+    is_fitted = False
 
+    # 1단계: 최근 데이터로 시도
     if len(y_calib_final) > 50:
-        # 최근 데이터가 충분한 경우
         calibrator.fit(X_calib_final, y_calib_final)
-    else:
-        # 최근 데이터가 충분하지 않은 경우 과거 Eval 데이터에서 결측치 제거 후 사용
+        is_fitted = True
+    
+    # 2단계: 실패 시 과거 데이터로 시도
+    if not is_fitted:
         df_eval_clean = df_eval.dropna(subset=["pred_score", "excess_ret"])
-        
         if len(df_eval_clean) > 0:
             calibrator.fit(
                 df_eval_clean["pred_score"].values.reshape(-1, 1), 
                 df_eval_clean["excess_ret"].values
             )
+            is_fitted = True
+
+    # 3단계: 둘 다 데이터가 없을 시 임시 기준
+    if not is_fitted:
+        dummy_X = np.array([[0.0], [1.0]])
+        dummy_y = np.array([0.0, 0.1]) 
+        calibrator.fit(dummy_X, dummy_y)
 
     print(f"[5/6] {latest_date.date()} 기준 실전 추론 및 SHAP 요인 분석...")
     snapshot_mask = df_m["trade_date"] == latest_date
