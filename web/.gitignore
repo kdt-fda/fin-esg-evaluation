@@ -7,6 +7,10 @@ frontend/dist/
 frontend/dist-ssr/
 frontend/.vite/
 frontend/coverage/
+node_modules/
+dist/
+build/
+.vite/
 
 # Logs
 logs/
