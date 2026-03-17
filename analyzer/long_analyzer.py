@@ -291,6 +291,7 @@ def run_long_term_pipeline():
     df_inf["Confidence_Score"] = df_inf["conf_score"].fillna(50.0)
     df_inf["Return_Score"] = df_inf["Expected_Return(%)"].rank(pct=True) * 100
     df_inf["Attractiveness_Score"] = (df_inf["Return_Score"] * 0.5) + (df_inf["Confidence_Score"] * 0.5)
+    df_inf = df_inf.replace([np.inf, -np.inf], np.nan)
 
     explainer = shap.TreeExplainer(ranker)
     updated_feat_cols = imputer.get_feature_names_out(feats)
@@ -316,14 +317,18 @@ def run_long_term_pipeline():
         top_feat_names = [item[0] for item in combined_feats]
         top_feat_vals = [round(float(item[1]), 4) for item in combined_feats]
 
-        exp_ret = round(float(row['Expected_Return(%)']), 4)
-        score = round(float(row['Attractiveness_Score']), 4)
-        conf_val = round(float(row['Confidence_Score']), 4)
+        exp_ret = round(float(row['Expected_Return(%)']), 4) if not np.isnan(row['Expected_Return(%)']) else None
+        score = round(float(row['Attractiveness_Score']), 4) if not np.isnan(row['Attractiveness_Score']) else None
+        conf_val = round(float(row['Confidence_Score']), 4) if not np.isnan(row['Confidence_Score']) else None
+
+        def clean_val(v):
+            return float(v) if pd.notnull(v) and not np.isinf(v) else None
 
         db_insert_data.append((
             latest_date.date(), ticker, exp_ret, score, 
             json.dumps(top_feat_names), json.dumps(top_feat_vals),
-            metrics['dir_acc'], metrics['hit_rate'], metrics['rank_ic'], metrics['ls_spread'], conf_val
+            clean_val(metrics['dir_acc']), clean_val(metrics['hit_rate']),
+            clean_val(metrics['rank_ic']), clean_val(metrics['ls_spread']), conf_val
         ))
 
     print(f"[6/6] LONG_PRED_TB 적재 중... (총 {len(db_insert_data)}건)")
