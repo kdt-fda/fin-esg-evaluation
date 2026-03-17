@@ -31,7 +31,7 @@ def patched_merge_asof(left, right, on=None, left_on=None, right_on=None, **kwar
 pd.merge_asof = patched_merge_asof
 
 # =========================================================================
-# 1. 공통 유틸리티 (DB 연결)
+# 1. 공통 유틸리티
 # =========================================================================
 def _connect():
     host = os.environ.get('DB_HOST')
@@ -50,7 +50,7 @@ def zfill6(x):
     return pd.Series(x).astype(str).str.replace(r"\.0$", "", regex=True).str.replace("-", "", regex=False).str.strip().str.zfill(6).values[0]
 
 # =========================================================================
-# 2. 단기 궤적 예측 메인 파이프라인
+# 2. 메인 파이프라인
 # =========================================================================
 def run_short_term_pipeline(win: int = 10, horizon: int = 20):
     print("🚀 단기 예측 모델 파이프라인 가동 (GPU/병렬처리 적용)...")
@@ -58,18 +58,15 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
     joiner = StockDataJoiner()
     selector = FeatureSelector()
     
-    # 1. KOSPI 200 종목 가져오기
     conn = _connect()
     try:
         kospi_df = pd.read_sql("SELECT ticker, stock_name FROM KOSPI200_STOCKS_TB", conn)
 
-        # SHAP 분석 시 거시/공통 파생 지표 제외
-        macro_df = pd.read_sql("SELECT * FROM MACROECONOMICS_TB LIMIT 1", conn)
+        # SHAP 분석 시 공통 파생 지표 제외
         common_df = pd.read_sql("SELECT * FROM COMMON_TB LIMIT 1", conn)
         
-        macro_cols = [c for c in macro_df.columns if c not in ['trade_date', 'date']]
         common_cols = [c for c in common_df.columns if c not in ['trade_date', 'date']]
-        global_exclude_bases = set(macro_cols + common_cols + ['msci_event'])
+        global_exclude_bases = set(common_cols + ['msci_event'])
     finally:
         conn.close()
     
@@ -106,6 +103,11 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
 
         # FeatureSelector 호출
         X_base_raw = selector.get_features(df, mode='short')
+
+        ignore_cols = ['trade_date', 'ticker', 'stock_name', 'close']
+        num_feats = [c for c in X_base_raw.columns if pd.api.types.is_numeric_dtype(X_base_raw[c]) and c not in ignore_cols]
+        
+        X_base_raw = X_base_raw[num_feats]
         X_base_raw = X_base_raw.replace([np.inf, -np.inf], np.nan).ffill().fillna(0)
         
         # Lag 피처 생성
@@ -147,9 +149,6 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
     base_test = pd.concat(global_base_te, axis=0).reset_index(drop=True)
     X_inf = pd.concat(inf_X_list, axis=0).reset_index(drop=True)
 
-    # ---------------------------------------------------------
-    # GPU 감지 및 모델 병렬 학습 (Multi-threading)
-    # ---------------------------------------------------------
     print(f"[2/5] XGBoost GPU 감지 및 {horizon}개 모델 병렬 학습 시작 (학습 샘플: {len(X_train)}건)...")
     
     use_gpu = False
@@ -191,9 +190,6 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
             h, m = future.result()
             models[h] = m
 
-    # ---------------------------------------------------------
-    # 백테스트 및 추론, DB 적재
-    # ---------------------------------------------------------
     print("[3/5] Test Set 기반 백테스트 및 신뢰도(Confidence) 산출 중...")
     # 20개 모델의 예측값을 옆으로 이어 붙임 (MultiOutputRegressor와 동일한 형태)
     pred_all_te = np.column_stack([m.predict(X_test) for m in models])
@@ -241,15 +237,17 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
         agg_shap = {}
         for j, f_name in enumerate(X_inf.columns):
             base_f = f_name.split('_lag')[0]
-            # 거시경제 지표나 공통 파생 지표는 SHAP Top 요인에서 제외
+            # 공통 파생 지표는 SHAP Top 요인에서 제외
             if base_f not in global_exclude_bases:
                 agg_shap[base_f] = agg_shap.get(base_f, 0) + sv[j]
             
-        positive_features = {k: v for k, v in agg_shap.items() if v > 0}
-        sorted_features = sorted(positive_features.items(), key=lambda item: item[1], reverse=True)[:5]
+        # 긍정 Top 3 / 부정 Top 3
+        pos_feats = sorted([(k, v) for k, v in agg_shap.items() if v > 0], key=lambda x: x[1], reverse=True)[:3]
+        neg_feats = sorted([(k, v) for k, v in agg_shap.items() if v < 0], key=lambda x: x[1])[:3]
         
-        top_feat_names = [item[0] for item in sorted_features]
-        top_feat_vals = [round(float(item[1]), 4) for item in sorted_features]
+        combined_feats = pos_feats + neg_feats
+        top_feat_names = [item[0] for item in combined_feats]
+        top_feat_vals = [round(float(item[1]), 4) for item in combined_feats]
         
         conf_data = df_conf.loc[ticker] if ticker in df_conf.index else pd.Series({'dir_acc': 50.0, 'mape': 5.0, 'conf_score': 50.0})
 
