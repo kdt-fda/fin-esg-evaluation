@@ -73,7 +73,7 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
     stock_names = kospi_df['stock_name'].dropna().unique()
     
     global_X_tr, global_y_tr = [], []
-    global_X_te, global_y_te, global_base_te = [], []
+    global_X_te, global_y_te, global_base_te = [], [], []
     inf_X_list, inf_ticker_list = [], []
     test_indices_by_stock = {}
     current_test_idx = 0
