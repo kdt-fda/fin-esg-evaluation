@@ -15,6 +15,8 @@ venv
 
 # 프로젝트 로그 및 모델 캐시 (Docker 외부 볼륨으로 관리할 항목)
 update_log.log
+analyze_log.log
+logs/
 model_cache/
 docs_cache/
 

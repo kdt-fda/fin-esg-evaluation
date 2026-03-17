@@ -12,17 +12,24 @@ services:
       - .env
     volumes:
       - ./model_cache:/app/model_cache
-      - ./update_log.log:/app/update_log.log
+      - ./logs:/app/logs
+    tty: true
+    stdin_open: true
     tty: true
     stdin_open: true
 
-  #analyzer:
-  #  build:
-  #    context: .
-  #    dockerfile: Dockerfile.analyzer
-  #  container_name: stock-analyzer-container
-  #  restart: on-failure
-  #  env_file:
-  #    - .env
-  #  depends_on:
-  #    - crawler
+  analyzer:
+    build:
+      context: .
+      dockerfile: Dockerfile.analyzer
+      no_cache: true
+      pull: true
+    image: kyucc/fin-analyzer-bot:latest
+    container_name: stock-analyzer-container
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+    tty: true
+    stdin_open: true
