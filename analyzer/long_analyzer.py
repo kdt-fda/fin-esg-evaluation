@@ -154,7 +154,7 @@ def run_long_term_pipeline():
         # StockDataJoiner 호출
         df = joiner.get_modeling_dataset(s_name)
 
-        if df is None or len(df) < H_VAL + 50:
+        if df is None or len(df) < H_VAL + 30:
             continue
         
         ticker = zfill6([df['ticker'].iloc[0]])

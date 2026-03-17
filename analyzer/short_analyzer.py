@@ -85,7 +85,7 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
         # StockDataJoiner 호출
         df = joiner.get_modeling_dataset(s_name)
         
-        if df is None or len(df) < win + horizon + 50:
+        if df is None or len(df) < win + horizon + 30:
             continue
             
         ticker = zfill6([df['ticker'].iloc[0]])
