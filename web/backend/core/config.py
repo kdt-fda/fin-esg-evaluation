@@ -12,8 +12,6 @@ class Settings(BaseSettings):
 
     MODEL_SHORT_PATH: str = "artifacts/xgb_short.json"
     MODEL_LONG_PATH: str = "artifacts/xgb_long.json"
-    SHORT_HORIZON_DAYS: int = 7
-    LONG_HORIZON_MONTHS: int = 6
     
 
     @field_validator("ALLOWED_ORIGINS", mode="before")

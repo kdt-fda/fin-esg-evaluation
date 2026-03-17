@@ -5,8 +5,9 @@ import type { Stock } from './components/StockSidebar';
 import ShortTermPredictionChart from './components/ShortTermChart';
 import type { ChartDataPoint } from './components/ShortTermChart';
 import LongTermChart from './components/LongTermChart';
+import ShortTermAnalysis from './components/ShortTermAnalysis';
+import LongTermAnalysis from './components/LongTermAnalysis';
 
-import PredictionDetailPage from './components/PredictionDetailPage';
 import { Activity, Clock, Menu, X, ChevronDown, ChevronUp } from 'lucide-react';
 
 type PredictionResponse = {
@@ -19,6 +20,20 @@ type StockPricePoint = {
   date: string;
   actual?: number;
 };
+
+/* ===== [ADD START] long chart 전용 타입 추가 ===== */
+type LongTermItem = {
+  code: string;
+  name: string;
+  sector: string;
+  score: number;
+};
+
+type LongPredictionResponse = {
+  confidence: number;
+  data: LongTermItem[];
+};
+/* ===== [ADD END] long chart 전용 타입 추가 ===== */
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000';
 
@@ -75,47 +90,17 @@ export default function App() {
   const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
 
   const [shortTermData, setShortTermData] = useState<ChartDataPoint[]>([]);
-  const [longTermData, setLongTermData] = useState<ChartDataPoint[]>([]);
+  const [longTermData, setLongTermData] = useState<LongTermItem[]>([]);
   const [shortConfidence, setShortConfidence] = useState<number>(0);
   const [longConfidence, setLongConfidence] = useState<number>(0);
 
-  const [shortPastCountFromApi, setShortPastCountFromApi] = useState<number>(0);
-
   const [timeUntilUpdate, setTimeUntilUpdate] = useState('');
-  const [detailData, setDetailData] = useState<{ data: ChartDataPoint; stock: Stock } | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isModelInfoExpanded, setIsModelInfoExpanded] = useState(false);
-
-  const shortPastCountFallback = useMemo(() => calcPastCount(shortTermData), [shortTermData]);
-  const shortPastCount = shortPastCountFromApi > 0 ? shortPastCountFromApi : shortPastCountFallback;
-
-  const basePrice = useMemo(() => {
-    if (shortTermData.length === 0) return 0;
-
-    const latestActual = [...shortTermData]
-      .reverse()
-      .find((d) => d.actual !== undefined && d.actual !== null);
-
-    return latestActual?.actual ?? 0;
-  }, [shortTermData]);
-
-  /* ===== [ADD START] LongTermChart 연동용 fallback 처리 ===== */
-  // long prediction API가 아직 없거나 데이터가 비어 있어도
-  // LongTermChart 내부 mock 데이터가 동작하도록 최소값만 넘겨줍니다.
-  // confidence는 API 값이 있으면 사용하고, 없으면 0을 넘겨 내부 mock UI를 그대로 쓰게 합니다.
-  const resolvedLongConfidence = useMemo(() => {
-    return longConfidence > 0 ? longConfidence : 0;
-  }, [longConfidence]);
-
-  // API에서 longTermData가 오면 전달하고,
-  // 없으면 undefined를 넘겨 LongTermChart 내부 mock 데이터가 사용되도록 합니다.
-  const resolvedLongTermData = useMemo(() => {
-    return longTermData.length > 0 ? longTermData : undefined;
-  }, [longTermData]);
-  /* ===== [ADD END] LongTermChart 연동용 fallback 처리 ===== */
+  const shortPastCount = useMemo(() => calcPastCount(shortTermData), [shortTermData]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -199,7 +184,7 @@ export default function App() {
           pastCount: 0,
         };
 
-        let longJson: PredictionResponse = {
+        let longJson: LongPredictionResponse = {
           confidence: 0,
           data: [],
         };
@@ -223,13 +208,25 @@ export default function App() {
             signal: controller.signal,
           });
 
+          /* ===== [ADD START] long API는 실패해도 에러로 막지 않고 넘어가기 ===== */
           if (longRes.ok) {
-            longJson = (await longRes.json()) as PredictionResponse;
+            longJson = (await longRes.json()) as LongPredictionResponse;
           } else {
             console.warn('long prediction not ready:', await longRes.text());
+            longJson = {
+              confidence: 0,
+              data: [],
+            };
           }
+          /* ===== [ADD END] long API는 실패해도 에러로 막지 않고 넘어가기 ===== */
         } catch (err) {
+          /* ===== [ADD START] long API fetch 실패 시에도 빈 데이터로 처리 ===== */
           console.warn('long prediction fetch failed:', err);
+          longJson = {
+            confidence: 0,
+            data: [],
+          };
+          /* ===== [ADD END] long API fetch 실패 시에도 빈 데이터로 처리 ===== */
         }
 
         const mergedShortData = mergeShortChartData(
@@ -241,7 +238,6 @@ export default function App() {
         setLongTermData(longJson.data ?? []);
         setShortConfidence(shortJson.confidence ?? 0);
         setLongConfidence(longJson.confidence ?? 0);
-        setShortPastCountFromApi(shortJson.pastCount ?? 0);
       } catch (err: any) {
         if (err?.name === 'AbortError') return;
 
@@ -251,7 +247,6 @@ export default function App() {
         setLongTermData([]);
         setShortConfidence(0);
         setLongConfidence(0);
-        setShortPastCountFromApi(0);
       } finally {
         setLoading(false);
       }
@@ -260,11 +255,6 @@ export default function App() {
     fetchData();
     return () => controller.abort();
   }, [selectedStock?.code]);
-
-  const handleReasonClick = (data: ChartDataPoint) => {
-    if (!selectedStock) return;
-    setDetailData({ data, stock: selectedStock });
-  };
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -315,27 +305,52 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-y-auto px-8 py-6">
-          <div className="flex gap-6 mb-6">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
             <ShortTermPredictionChart
               title="단기 예측 차트"
               data={shortTermData}
               confidence={shortConfidence}
               pastCount={shortPastCount}
-              onReasonClick={handleReasonClick}
             />
 
             <LongTermChart
-              title = "중장기 투자 매력도 랭킹"
-              stockName={selectedStock?.name ?? '-'}
-              stockCode={selectedStock?.code ?? '-'}
-              basePrice={basePrice}
-              confidence={resolvedLongConfidence}
-              /* ===== [ADD START] API 없으면 LongTermChart 내부 mock 사용 ===== */
-              data={resolvedLongTermData}
-              /* ===== [ADD END] API 없으면 LongTermChart 내부 mock 사용 ===== */
+              title="중장기 투자 매력도 랭킹"
+              confidence={longConfidence}
+              currentSector={selectedStock?.sector ?? '-'}
+              selectedStockName={selectedStock?.name ?? '-'}
+              selectedStockCode={selectedStock?.code ?? '-'}
+              data={longTermData}
             />
           </div>
 
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 mb-6 items-start">
+            <div>
+              <div className="mb-4">
+                <h2 className="text-xl font-semibold text-gray-900">단기 예측 근거</h2>
+              </div>
+
+              <ShortTermAnalysis
+                stockName={selectedStock?.name ?? '-'}
+                stockCode={selectedStock?.code ?? '-'}
+                isSidebarOpen={isSidebarOpen}
+              />
+            </div>
+
+            <div>
+              <div className="mb-4">
+                <h2 className="text-xl font-semibold text-gray-900">중장기 매력도 근거</h2>
+              </div>
+
+              <LongTermAnalysis
+                stockName={selectedStock?.name ?? '-'}
+                stockCode={selectedStock?.code ?? '-'}
+                currentSector={selectedStock?.sector ?? '-'}
+                data={longTermData}
+                isExpanded={!isSidebarOpen}
+              />
+            </div>
+          </div>
+          
           <div className="bg-white rounded-xl shadow-sm p-6">
             <button
               onClick={() => setIsModelInfoExpanded(!isModelInfoExpanded)}
@@ -399,18 +414,6 @@ export default function App() {
           <div className="absolute right-4 bottom-3 text-sm text-gray-400">© Team MER-M</div>
         </footer>
       </div>
-
-      {detailData && (
-        <PredictionDetailPage
-          stock={detailData.stock}
-          date={detailData.data.date}
-          actualPrice={detailData.data.actual}
-          predictedPrice={detailData.data.predicted}
-          reasons={detailData.data.reason || []}
-          changeReason={detailData.data.changeReason || ''}
-          onClose={() => setDetailData(null)}
-        />
-      )}
     </div>
   );
 }

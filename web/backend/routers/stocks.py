@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query, HTTPException
 
 from db.database import get_connection
+from services.turning_points import build_turning_points
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
 
@@ -142,3 +143,16 @@ def get_stock_prices(
             ]
     finally:
         conn.close()
+
+@router.get("/{code}/turning-points")
+def get_stock_turning_points(
+    code: str,
+    lookback: int = Query(20, ge=5, le=60, description="변곡점 탐지용 최근 거래일 수"),
+):
+    """
+    특정 종목의 최근 주요 변곡점 반환
+    """
+    try:
+        return build_turning_points(code, turning_lookback=lookback)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,13 +1,5 @@
 import { useMemo, useState } from 'react';
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  XAxis,
-  YAxis,
-} from 'recharts';
+import { Area, AreaChart, CartesianGrid, Tooltip, ResponsiveContainer, XAxis, YAxis} from 'recharts';
 import { Info, X } from 'lucide-react';
 
 interface PredictionReason {
@@ -29,7 +21,6 @@ interface ShortTermPredictionChartProps {
   data: ChartDataPoint[];
   confidence: number;
   pastCount?: number;
-  onReasonClick?: (data: ChartDataPoint) => void;
 }
 
 function formatTickLabel(value: string): string {
@@ -70,34 +61,86 @@ export default function ShortTermPredictionChart({
     return new Set(years).size >= 2;
   }, [visibleData]);
 
-  const CustomXAxisTick = ({ x, y, payload, index }: any) => {
+  const tickInterval = useMemo(() => {
+    const n = visibleData.length;
+
+    if (n <= 60) return Math.max(0, Math.floor(n / 6));
+    if (n <= 250) return Math.max(0, Math.floor(n / 8));
+
+    return Math.max(0, Math.floor(n / 10));
+  }, [visibleData.length]);
+
+  const normalizedConfidence = useMemo(() => {
+    if (!Number.isFinite(confidence)) return 0;
+    return Math.max(0, Math.min(100, Number(confidence.toFixed(1))));
+  }, [confidence]);
+
+
+
+  const axisMeta = useMemo(() => {
+    const ticks = new Set<string>();
+    const yearMarkers = new Set<string>();
+
+    visibleData.forEach((item, index) => {
+      const currentYear = getYear(item.date);
+      const previousYear =
+        index > 0 ? getYear(visibleData[index - 1].date) : null;
+
+      // 기본 날짜 tick
+      if (index % (tickInterval + 1) === 0) {
+        ticks.add(item.date);
+      }
+
+      // 연도 시작 지점 tick
+      if (currentYear !== null && (index === 0 || currentYear !== previousYear)) {
+        ticks.add(item.date);
+        yearMarkers.add(item.date);
+      }
+    });
+
+    const displayTicks = Array.from(ticks).sort(
+      (a, b) => new Date(a).getTime() - new Date(b).getTime()
+    );
+
+    return {
+      displayTicks,
+      yearMarkers,
+    };
+  }, [visibleData, tickInterval]);
+
+
+  const CustomXAxisTick = ({ x, y, payload }: any) => {
     const value: string = payload?.value ?? '';
     const label = formatTickLabel(value);
 
-    let showYear = false;
-    let yearText: string | null = null;
+    const isYearMarker =
+      spansMultipleYears && axisMeta.yearMarkers.has(value);
 
-    if (spansMultipleYears && typeof index === 'number' && index > 0) {
-      const currentDate = new Date(visibleData[index]?.date);
-      const previousDate = new Date(visibleData[index - 1]?.date);
-
-      const currentYear = currentDate.getFullYear();
-      const previousYear = previousDate.getFullYear();
-      const currentMonth = currentDate.getMonth();
-
-      if (currentYear !== previousYear && currentMonth === 0) {
-        showYear = true;
-        yearText = String(currentYear);
-      }
-    }
+    const yearText = getYear(value);
 
     return (
       <g>
-        <text x={x} y={y + 12} textAnchor="middle" fill="#6b7280" fontSize={11}>
-          {label}
-        </text>
-        {showYear && yearText && (
-          <text x={x} y={y + 24} textAnchor="middle" fill="#9ca3af" fontSize={10}>
+        {/* 연도 시작 지점이면 날짜 대신 연도만 아래에 표시 */}
+        {!isYearMarker && (
+          <text
+            x={x}
+            y={y + 12}
+            textAnchor="middle"
+            fill="#6b7280"
+            fontSize={11}
+          >
+            {label}
+          </text>
+        )}
+
+        {isYearMarker && yearText && (
+          <text
+            x={x}
+            y={y + 26}
+            textAnchor="middle"
+            fill="#9ca3af"
+            fontSize={10}
+          >
             {yearText}
           </text>
         )}
@@ -105,12 +148,6 @@ export default function ShortTermPredictionChart({
     );
   };
 
-  const tickInterval = useMemo(() => {
-    const n = visibleData.length;
-    if (n <= 60) return Math.max(0, Math.floor(n / 6));
-    if (n <= 250) return Math.max(0, Math.floor(n / 8));
-    return Math.max(0, Math.floor(n / 10));
-  }, [visibleData.length]);
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
@@ -134,6 +171,9 @@ export default function ShortTermPredictionChart({
     return null;
   };
 
+
+
+
   return (
     <div className="bg-white rounded-xl shadow-sm p-6 flex-1">
       <div className="flex justify-between items-start mb-6">
@@ -145,9 +185,9 @@ export default function ShortTermPredictionChart({
               <div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full ${
-                    confidence >= 80 ? 'bg-green-500' : confidence >= 60 ? 'bg-yellow-500' : 'bg-red-500'
+                    normalizedConfidence >= 80 ? 'bg-green-500' : normalizedConfidence >= 60 ? 'bg-yellow-500' : 'bg-red-500'
                   }`}
-                  style={{ width: `${confidence}%` }}
+                  style={{ width: `${normalizedConfidence}%` }}
                 />
               </div>
               <span className="text-sm font-semibold text-gray-900">{confidence}%</span>
@@ -163,7 +203,7 @@ export default function ShortTermPredictionChart({
       </div>
 
       <div className="relative">
-        <ResponsiveContainer width="100%" height={300}>
+        <ResponsiveContainer width="100%" height={spansMultipleYears ? 330 : 300}>
           <AreaChart data={visibleData}>
             <defs>
               <linearGradient id="colorActual" x1="0" y1="0" x2="0" y2="1">
@@ -181,9 +221,10 @@ export default function ShortTermPredictionChart({
             <XAxis
               dataKey="date"
               tick={<CustomXAxisTick />}
+              ticks = {axisMeta.displayTicks}
               tickLine={{ stroke: '#e5e7eb' }}
-              interval={tickInterval}
-              height={spansMultipleYears ? 40 : 25}
+              interval={0}
+              height={spansMultipleYears ? 48 : 25}
             />
 
             <YAxis
@@ -295,7 +336,7 @@ export default function ShortTermPredictionChart({
               <div>
                 <h5 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
                   <div className="w-1 h-4 bg-green-500 rounded-full"></div>
-                  예측 신뢰도: {confidence}%
+                  예측 신뢰도: {normalizedConfidence}%
                 </h5>
                 <p>
                   예측 신뢰도는 방향 적중률과 가격 오차를 함께 반영한 점수입니다.

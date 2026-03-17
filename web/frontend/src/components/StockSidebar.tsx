@@ -129,6 +129,9 @@ export default function StockSidebar({ selectedStock, onSelectStock }: StockSide
     listRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+
+
+  
   return (
     <div className="w-80 bg-white border-r border-gray-200 h-screen flex flex-col">
       <div className="px-6 pt-6 pb-3 border-b border-gray-200">

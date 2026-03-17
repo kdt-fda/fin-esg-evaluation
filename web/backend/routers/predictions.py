@@ -28,73 +28,72 @@ def _safe_float(value):
     return float(value)
 
 
+def _calc_short_confidence(da, mape) -> float:
+    da_val = _safe_float(da) or 0.0
+    mape_val = _safe_float(mape) or 0.0
+
+    score = (da_val * 0.6) + (max(0.0, 100.0 - mape_val) * 0.4)
+    return round(score, 2)
+
+
+def _calc_long_confidence(hr, ic, da) -> float:
+    hr_val = _safe_float(hr) or 0.0
+    ic_val = _safe_float(ic) or 0.0
+    da_val = _safe_float(da) or 0.0
+
+    score = (hr_val * 0.4) + (ic_val * 0.35) + (da_val * 0.25)
+    return round(score, 2)
+
+
 # -----------------------------
 # SHORT TERM
-# 실제 종가(STOCK_TB.close) + 단기 예측(SHORT_PRED_TB) + 설명(SHORT_LLM_TB)
+# 실제 종가(STOCK_TB.close)는 /stocks/{code}/prices 에서 별도 조회
+# 여기서는 단기 예측(SHORT_PRED_TB) + 설명(SHORT_LLM_TB) + confidence 반환
 # -----------------------------
 @router.get("/short")
 def predict_short(
     code: str = Query(..., description="ticker 예: 005930"),
-    start_date: str | None = Query(None, description="YYYY-MM-DD"),
-    end_date: str | None = Query(None, description="YYYY-MM-DD"),
-    limit: int | None = Query(None, ge=1, le=1000, description="최근 N건만 조회"),
 ):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             sql = """
                 SELECT
-                    s.trade_date                      AS trade_date,
-                    s.close                           AS actual_close,
-                    p.prediction                      AS predicted_value,
-                    p.shap_feature                    AS shap_feature,
-                    p.shap_value                      AS shap_value,
-                    l.interpretation                  AS interpretation
-                FROM STOCK_TB s
-                LEFT JOIN SHORT_PRED_TB p
-                    ON s.trade_date = p.trade_date
-                   AND s.ticker = p.ticker
+                    p.trade_date      AS trade_date,
+                    p.prediction      AS predicted_value,
+                    p.shap_feature    AS shap_feature,
+                    p.shap_value      AS shap_value,
+                    p.DA              AS da,
+                    p.MAPE            AS mape,
+                    l.interpretation  AS interpretation
+                FROM SHORT_PRED_TB p
                 LEFT JOIN SHORT_LLM_TB l
-                    ON s.trade_date = l.trade_date
-                   AND s.ticker = l.ticker
-                WHERE s.ticker = %s
+                    ON p.trade_date = l.trade_date
+                   AND p.ticker = l.ticker
+                WHERE p.ticker = %s
+                  AND p.trade_date >= CURDATE()
+                ORDER BY p.trade_date ASC
+                LIMIT 20
             """
-            params = [code]
 
-            if start_date:
-                sql += " AND s.trade_date >= %s"
-                params.append(start_date)
-
-            if end_date:
-                sql += " AND s.trade_date <= %s"
-                params.append(end_date)
-
-            sql += " ORDER BY s.trade_date ASC"
-
-            if limit is not None:
-                sql += " LIMIT %s"
-                params.append(limit)
-
-            cur.execute(sql, params)
+            cur.execute(sql, [code])
             rows = cur.fetchall()
 
             if not rows:
-                raise HTTPException(status_code=404, detail="단기 예측 데이터를 찾을 수 없습니다.")
+                return {
+                    "confidence": 0,
+                    "pastCount": 0,
+                    "data": [],
+                }
 
             data = []
-            past_count = 0
 
             for r in rows:
                 point = {
                     "date": _to_ymd(r["trade_date"]),
-                    "actual": _safe_float(r["actual_close"]),
+                    "predicted": _safe_float(r["predicted_value"]),
                 }
 
-                # prediction이 단일값일 경우
-                if r["predicted_value"] is not None:
-                    point["predicted"] = _safe_float(r["predicted_value"])
-
-                # shap_feature / shap_value / interpretation 이 있으면 reason 구성
                 if r["shap_feature"] is not None and r["shap_value"] is not None:
                     point["reason"] = [
                         {
@@ -109,38 +108,15 @@ def predict_short(
 
                 data.append(point)
 
-                # predicted가 아직 없는 구간은 과거(actual) 구간으로 간주
-                if r["predicted_value"] is None:
-                    past_count += 1
-
-                # -----------------------------------------
-                # [배열(JSON)로 바뀌는 경우 예시]
-                #
-                # prediction 컬럼이 예:
-                # [72000, 72100, 72300]
-                # 같은 JSON 배열이면, 위의 단일값 처리 대신
-                # "현재 row 하나"가 아니라 "미래 여러 포인트"를 펼쳐야 합니다.
-                #
-                # 예시:
-                #
-                # import json
-                # preds = r["predicted_value"]
-                # if isinstance(preds, str):
-                #     preds = json.loads(preds)
-                #
-                # for idx, pred in enumerate(preds, start=1):
-                #     future_date = pd.to_datetime(r["trade_date"]) + pd.Timedelta(days=idx)
-                #     data.append({
-                #         "date": _to_ymd(future_date),
-                #         "predicted": float(pred)
-                #     })
-                #
-                # 이 경우 현재 SQL / 로직 구조를 조금 바꾸는 게 더 깔끔합니다.
-                # -----------------------------------------
+            # 같은 배치의 예측이면 DA/MAPE가 동일하거나 매우 유사하다고 보고 첫 row 기준 사용
+            confidence = _calc_short_confidence(
+                rows[0].get("da"),
+                rows[0].get("mape"),
+            )
 
             return {
-                "confidence": 0,   # 나중에 별도 컬럼/테이블 생기면 교체
-                "pastCount": past_count,
+                "confidence": confidence,
+                "pastCount": 0,
                 "data": data,
             }
 
@@ -150,178 +126,117 @@ def predict_short(
 
 # -----------------------------
 # LONG TERM
-# 실제 월말 종가(STOCK_TB.close) + 장기 예측(LONG_PRED_TB) + 설명(LONG_LLM_TB)
+# 선택 종목의 섹터를 찾고,
+# 같은 섹터에 속한 모든 종목의 LONG_PRED_TB.score 반환
+# confidence는 선택 종목의 최신 DA/HR/IC 기준으로 계산
 # -----------------------------
 @router.get("/long")
 def predict_long(
     code: str = Query(..., description="ticker 예: 005930"),
-    start_date: str | None = Query(None, description="YYYY-MM-DD"),
-    end_date: str | None = Query(None, description="YYYY-MM-DD"),
-    limit: int | None = Query(None, ge=1, le=60, description="최근 N개월만 조회"),
 ):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            # 1) STOCK_TB에서 일별 종가를 가져온 뒤
-            # 2) 파이썬에서 월말 종가로 리샘플
-            # 3) LONG_PRED_TB / LONG_LLM_TB와 trade_date 기준 병합
-            sql_actual = """
+            # 선택 종목의 sector_code 조회
+            stock_sql = """
                 SELECT
-                    trade_date,
-                    close
-                FROM STOCK_TB
-                WHERE ticker = %s
+                    k.ticker,
+                    k.stock_name,
+                    k.sector_code,
+                    s.sector_name
+                FROM KOSPI200_STOCKS_TB k
+                LEFT JOIN SECTOR_TB s
+                    ON k.sector_code = s.sector_code
+                WHERE k.ticker = %s
+                LIMIT 1
             """
-            actual_params = [code]
+            cur.execute(stock_sql, [code])
+            selected_stock = cur.fetchone()
 
-            if start_date:
-                sql_actual += " AND trade_date >= %s"
-                actual_params.append(start_date)
+            if not selected_stock:
+                raise HTTPException(status_code=404, detail="선택한 종목을 찾을 수 없습니다.")
 
-            if end_date:
-                sql_actual += " AND trade_date <= %s"
-                actual_params.append(end_date)
+            sector_code = selected_stock.get("sector_code")
+            sector_name = selected_stock.get("sector_name")
 
-            sql_actual += " ORDER BY trade_date ASC"
-
-            cur.execute(sql_actual, actual_params)
-            actual_rows = cur.fetchall()
-
-            if not actual_rows:
-                raise HTTPException(status_code=404, detail="장기 예측을 위한 실제 주가 데이터를 찾을 수 없습니다.")
-
-            df_actual = pd.DataFrame(actual_rows)
-            df_actual["trade_date"] = pd.to_datetime(df_actual["trade_date"])
-            df_actual["close"] = df_actual["close"].astype(float)
-
-            # 월말 종가 생성
-            s = df_actual.set_index("trade_date")["close"]
-            try:
-                monthly_actual = s.resample("ME").last().dropna()
-            except ValueError:
-                monthly_actual = s.resample("M").last().dropna()
-
-            df_monthly_actual = monthly_actual.reset_index()
-            df_monthly_actual.columns = ["trade_date", "actual"]
-
-            # 예측값/설명 조회
-            sql_pred = """
-                SELECT
-                    p.trade_date         AS trade_date,
-                    p.prediction         AS predicted_value,
-                    p.shap_feature       AS shap_feature,
-                    p.shap_value         AS shap_value,
-                    l.interpretation     AS interpretation
-                FROM LONG_PRED_TB p
-                LEFT JOIN LONG_LLM_TB l
-                    ON p.trade_date = l.trade_date
-                   AND p.ticker = l.ticker
-                WHERE p.ticker = %s
-            """
-            pred_params = [code]
-
-            if start_date:
-                sql_pred += " AND p.trade_date >= %s"
-                pred_params.append(start_date)
-
-            if end_date:
-                sql_pred += " AND p.trade_date <= %s"
-                pred_params.append(end_date)
-
-            sql_pred += " ORDER BY p.trade_date ASC"
-
-            cur.execute(sql_pred, pred_params)
-            pred_rows = cur.fetchall()
-
-            df_pred = pd.DataFrame(pred_rows)
-
-            # 예측 데이터가 아예 없더라도 actual만 먼저 보여주고 싶으면 여기서 빈 df 허용 가능
-            if df_pred.empty:
-                # 현재월 actual만 보여주는 최소 응답
-                data = [
-                    {
-                        "date": _to_month_label(r["trade_date"]),
-                        "actual": _safe_float(r["actual"]),
-                    }
-                    for _, r in df_monthly_actual.iterrows()
-                ]
-
-                if limit is not None:
-                    data = data[-limit:]
-
+            if not sector_code:
                 return {
                     "confidence": 0,
-                    "data": data,
+                    "data": [],
                 }
 
-            df_pred["trade_date"] = pd.to_datetime(df_pred["trade_date"])
-
-            # 월말 actual + long prediction trade_date 기준 outer merge
-            df_merged = pd.merge(
-                df_monthly_actual,
-                df_pred,
-                how="outer",
-                on="trade_date",
-            ).sort_values("trade_date")
+            # 같은 섹터 전체 종목 + 최신 score 조회
+            ranking_sql = """
+                SELECT
+                    k.ticker AS code,
+                    k.stock_name AS name,
+                    k.sector_code AS sector_code,
+                    s.sector_name AS sector,
+                    lp.score AS score
+                FROM KOSPI200_STOCKS_TB k
+                LEFT JOIN SECTOR_TB s
+                    ON k.sector_code = s.sector_code
+                LEFT JOIN (
+                    SELECT
+                        p1.ticker,
+                        p1.score,
+                        p1.trade_date
+                    FROM LONG_PRED_TB p1
+                    INNER JOIN (
+                        SELECT
+                            ticker,
+                            MAX(trade_date) AS max_trade_date
+                        FROM LONG_PRED_TB
+                        GROUP BY ticker
+                    ) latest
+                        ON p1.ticker = latest.ticker
+                       AND p1.trade_date = latest.max_trade_date
+                ) lp
+                    ON k.ticker = lp.ticker
+                WHERE k.sector_code = %s
+                  AND k.is_active = TRUE
+                ORDER BY lp.score DESC, k.stock_name ASC
+            """
+            cur.execute(ranking_sql, [sector_code])
+            rows = cur.fetchall()
 
             data = []
+            for r in rows:
+                if r.get("score") is None:
+                    continue
 
-            for _, r in df_merged.iterrows():
-                point = {
-                    "date": _to_month_label(r["trade_date"]),
-                }
+                data.append({
+                    "code": r["code"],
+                    "name": r["name"],
+                    "sector": r["sector"] or sector_name or "",
+                    "score": _safe_float(r["score"]),
+                })
 
-                if pd.notna(r.get("actual")):
-                    point["actual"] = _safe_float(r["actual"])
+            # 선택 종목의 최신 confidence용 지표 조회
+            confidence_sql = """
+                SELECT
+                    p.DA AS da,
+                    p.HR AS hr,
+                    p.IC AS ic
+                FROM LONG_PRED_TB p
+                WHERE p.ticker = %s
+                ORDER BY p.trade_date DESC
+                LIMIT 1
+            """
+            cur.execute(confidence_sql, [code])
+            confidence_row = cur.fetchone()
 
-                # prediction이 단일값일 경우
-                if pd.notna(r.get("predicted_value")):
-                    point["predicted"] = _safe_float(r["predicted_value"])
-
-                if pd.notna(r.get("shap_feature")) and pd.notna(r.get("shap_value")):
-                    point["reason"] = [
-                        {
-                            "factor": str(r["shap_feature"]),
-                            "impact": r.get("interpretation") or "",
-                            "contribution": _safe_float(r["shap_value"]),
-                        }
-                    ]
-
-                if pd.notna(r.get("interpretation")) and r.get("interpretation"):
-                    point["changeReason"] = r["interpretation"]
-
-                data.append(point)
-
-                # -----------------------------------------
-                # [배열(JSON)로 바뀌는 경우 예시]
-                #
-                # LONG_PRED_TB.prediction 이 예:
-                # [0.03, 0.05, 0.08]
-                # 처럼 여러 개월 수익률/예측값 배열이면,
-                # 각 값마다 미래 월 포인트를 따로 펼쳐서 append 해야 합니다.
-                #
-                # 예시:
-                #
-                # import json
-                # preds = r["predicted_value"]
-                # if isinstance(preds, str):
-                #     preds = json.loads(preds)
-                #
-                # base_date = pd.to_datetime(r["trade_date"])
-                # for idx, pred in enumerate(preds, start=1):
-                #     future_date = base_date + pd.DateOffset(months=idx)
-                #     data.append({
-                #         "date": _to_month_label(future_date),
-                #         "predicted": float(pred)
-                #     })
-                #
-                # -----------------------------------------
-
-            if limit is not None:
-                data = data[-limit:]
+            if confidence_row:
+                confidence = _calc_long_confidence(
+                    confidence_row.get("hr"),
+                    confidence_row.get("ic"),
+                    confidence_row.get("da"),
+                )
+            else:
+                confidence = 0
 
             return {
-                "confidence": 0,   # 나중에 별도 컬럼/테이블 생기면 교체
+                "confidence": confidence,
                 "data": data,
             }
 

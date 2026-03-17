@@ -1,40 +1,64 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Cell, ReferenceLine, LabelList } from 'recharts';
 import { Info, X } from 'lucide-react';
+
+interface LongTermItem {
+  code: string;
+  name: string;
+  sector: string;
+  score: number;
+}
 
 interface SectorRanking {
   name: string;
   score: number;
   rank: number;
-  highlighted?: boolean; // 현재 선택된 종목의 섹터
+  highlighted?: boolean; 
 }
 
 interface GrowthRankingChartProps {
   title: string;
   confidence: number;
   currentSector: string;
-  selectedStockName : string; //선택
+  selectedStockName : string;
+  selectedStockCode : string; 
+  data?: LongTermItem[]; 
 }
 
-export default function GrowthRankingChart({ title, confidence, currentSector }: GrowthRankingChartProps) {
+export default function GrowthRankingChart({ title, confidence, currentSector, selectedStockName, selectedStockCode, data }: GrowthRankingChartProps) {
   const [showInfoModal, setShowInfoModal] = useState(false);
+  const normalizedConfidence = useMemo(() => {
+    if (!Number.isFinite(confidence)) return 0;
+    return Math.max(0, Math.min(100, Number(confidence.toFixed(1))));
+  }, [confidence]);
 
-  // Mock 섹터별 랭킹 데이터 (고려신용정보 예시 기준)
-  const sectorRankings: SectorRanking[] = [
-    { name: 'NICE평가정보', score: 92.3, rank: 1, highlighted: false },
-    { name: '미래에셋증권', score: 87.6, rank: 2, highlighted: false },
-    { name: '한국기업평가', score: 80.3, rank: 3, highlighted: false },
-    { name: '삼성증권', score: 78.9, rank: 4, highlighted:  true },
-    { name: 'NH투자증권', score: 73.1, rank: 5, highlighted: false },
-    { name: '나이스디앤비', score: 72.9, rank: 6,highlighted: false },
-    { name: '고려신용정보', score: 60.6, rank: 7, highlighted: false },
-    { name: 'SCI평가정보', score: 48.6, rank: 8, highlighted: false },
-    { name: '한국금융지주', score: 48.6, rank: 9, highlighted: false },
-    { name: '키움증권', score: 43.2, rank: 10, highlighted: false },
-  ];
+  const sectorRankings = useMemo<SectorRanking[]>(() => {
+    if (!data || data.length === 0) return [];
 
-  // 기준점 계산 (평균 점수)
-  const avgScore = sectorRankings.reduce((sum, item) => sum + item.score, 0) / sectorRankings.length;
+    const sorted = [...data].sort((a, b) => b.score - a.score);
+
+    const top10 = sorted.slice(0, 10);
+    const selected = sorted.find((item) => item.code === selectedStockCode);
+    const isSelectedInTop10 = top10.some((item) => item.code === selectedStockCode);
+
+    const finalList = !selected
+      ? top10
+      : isSelectedInTop10
+      ? top10
+      : [...top10.slice(0, 9), selected];
+
+    return finalList.map((item) => ({
+      name: item.name,
+      score: item.score,
+      rank: sorted.findIndex((s) => s.code === item.code) + 1,
+      highlighted: item.code === selectedStockCode,
+    }));
+  }, [data, selectedStockCode]);
+
+  const avgScore = useMemo(() => {
+    if (!data || data.length === 0) return 0;
+    return data.reduce((sum, item) => sum + item.score, 0) / data.length;
+  }, [data]);
 
   // 점수에 따른 그라데이션 색상 계산 (하늘색 -> 초록색)
   const getBarColor = (score: number, highlighted: boolean) => {
@@ -54,6 +78,9 @@ export default function GrowthRankingChart({ title, confidence, currentSector }:
     const data = sectorRankings.find(item => item.name === payload.value);
     const isHighlighted = data?.highlighted;
 
+
+
+    
     return (
       <g transform={`translate(${x},${y})`}>
         <text
@@ -82,12 +109,12 @@ export default function GrowthRankingChart({ title, confidence, currentSector }:
               <div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full ${
-                    confidence >= 80 ? 'bg-green-500' : confidence >= 60 ? 'bg-yellow-500' : 'bg-red-500'
+                    normalizedConfidence >= 80 ? 'bg-green-500' : normalizedConfidence >= 60 ? 'bg-yellow-500' : 'bg-red-500'
                   }`}
-                  style={{ width: `${confidence}%` }}
+                  style={{ width: `${normalizedConfidence}%` }}
                 />
               </div>
-              <span className="text-sm font-semibold text-gray-900">{confidence}%</span>
+              <span className="text-sm font-semibold text-gray-900">{normalizedConfidence}%</span>
             </div>
           </div>
         </div>
@@ -143,7 +170,7 @@ export default function GrowthRankingChart({ title, confidence, currentSector }:
               stroke="#9ca3af"
               strokeDasharray="5 5"
               label={{
-                value: `평균 (${avgScore.toFixed(1)}점)`,
+                value: `${currentSector} 평균 (${avgScore.toFixed(1)}점)`,
                 position: 'top',
                 fill: '#6b7280',
                 fontSize: 10,
@@ -238,7 +265,7 @@ export default function GrowthRankingChart({ title, confidence, currentSector }:
               <div>
                 <h5 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
                   <div className="w-1 h-4 bg-green-500 rounded-full"></div>
-                  예측 신뢰도: {confidence}%
+                  예측 신뢰도: {normalizedConfidence}%
                 </h5>
                 <p>
                   예측 신뢰도는 상위 종목 적중률, 순위 예측력, 전체 종목 방향성 적중률을 종합 반영한 점수입니다.
@@ -248,12 +275,28 @@ export default function GrowthRankingChart({ title, confidence, currentSector }:
               <div>
                 <h5 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
                   <div className="w-1 h-4 bg-purple-500 rounded-full"></div>
-                  활용 방법
+                  주요 분석 요소
                 </h5>
-                <p>
-                  점수가 높을수록 하늘색에 가까워지며, 낮을수록 초록색으로 표시됩니다.
-                  현재 선택한 종목은 주황색으로 표시되어
-                  경쟁사 대비 상대적 위치를 한눈에 파악할 수 있습니다.
+
+                <ul className="list-disc space-y-1 pl-5">
+
+                  <li>추세 지표: MA60·MA120 이동평균선, Golden Cross(20-60), Death Cross(20-60)</li>
+                  <li>기업 성장 및 수익성: revenue, revenue_growth, operating_income, operating_margin, net_income, EBITDA</li>
+                  <li>재무 안정성 및 효율성: ROE, ROA, debt_ratio</li>
+                  <li>기업 가치 평가: PER, PBR, EV/EBITDA</li>
+                  <li>시장 규모: price, shares, market_cap</li>
+                  <li>거시 환경: CPI, GDP, PMI, 금리 등 경기 지표</li>
+
+                </ul>
+              </div>
+
+              <div className="border-t border-gray-200 pt-4">
+                <p className="text-xs text-gray-500 flex gap-2">
+                  <span>💡</span>
+                  <span>
+                    점수가 높을수록 하늘색에 가까워지고 낮을수록 초록색으로 표시되며<br/>
+                    현재 선택한 종목은 주황색으로 강조됩니다.
+                  </span>
                 </p>
               </div>
             </div>
