@@ -10,7 +10,6 @@ import {
   Zap,
 } from 'lucide-react';
 import { Card } from './ui/card';
-import { Badge } from './ui/badge';
 
 interface ShortTermAnalysisProps {
   stockName: string;
@@ -18,13 +17,14 @@ interface ShortTermAnalysisProps {
   isSidebarOpen?: boolean;
 }
 
-type CardStatus = 'bullish' | 'bearish' | 'neutral' | 'caution';
+type SignalDirection = 'positive' | 'negative';
+type SignalStrength = 'high' | 'medium' | 'low';
 
 interface AnalysisCard {
   key: string;
   title: string;
-  status: CardStatus;
-  badge: string;
+  direction: SignalDirection;
+  strength: SignalStrength;
   summary: string;
   value?: {
     ma5?: number;
@@ -61,8 +61,8 @@ const getMockAnalysisData = (_stockName: string, _stockCode: string) => {
     {
       key: 'trend',
       title: '이동평균',
-      status: 'bullish',
-      badge: '골든크로스',
+      direction : 'positive',
+      strength : 'high',
       summary: '최근 5거래일 내 5일선이 20일선을 상향 돌파해 단기 추세 개선 신호가 확인됐습니다.',
       value: {
         ma5: 69200,
@@ -72,8 +72,8 @@ const getMockAnalysisData = (_stockName: string, _stockCode: string) => {
     {
       key: 'momentum',
       title: '모멘텀',
-      status: 'bullish',
-      badge: 'RSI 58.3',
+      direction : 'negative',
+      strength : 'low',      
       summary: '현재 RSI가 과열 구간은 아니고 MACD도 우호적이어서 단기 모멘텀은 비교적 양호합니다.',
       value: {
         rsi: 58.3,
@@ -83,8 +83,8 @@ const getMockAnalysisData = (_stockName: string, _stockCode: string) => {
     {
       key: 'volatility',
       title: '볼린저밴드',
-      status: 'neutral',
-      badge: '중상단',
+      direction : 'negative',
+      strength : 'medium',
       summary: '현재 가격이 밴드 중상단에서 움직이고 있어 강세 우위이지만 아직 돌파 신호로 단정할 단계는 아닙니다.',
       value: {
         bb_upper: 71500,
@@ -94,80 +94,137 @@ const getMockAnalysisData = (_stockName: string, _stockCode: string) => {
     {
       key: 'flow',
       title: '수급',
-      status: 'bullish',
-      badge: '순매수',
+      direction : 'negative',
+      strength : 'high',
       summary: '최근 5거래일 기준 외국인(+258억)과 기관(+142억) 수급이 모두 우호적이어서 단기 흐름을 지지합니다.',
       value: {
         foreign: '+258억',
         institution: '+142억',
       },
     },
+        {
+      key: 'flow',
+      title: '수급',
+      direction : 'positive',
+      strength : 'medium',      
+      summary: '최근 5거래일 기준 외국인(+258억)과 기관(+142억) 수급이 모두 우호적이어서 단기 흐름을 지지합니다.',
+      value: {
+        foreign: '+258억',
+        institution: '+142억',
+      },
+    },
+        {
+      key: 'flow',
+      title: '수급',
+      direction : 'positive',
+      strength : 'low',      
+      summary: '최근 5거래일 기준 외국인(+258억)과 기관(+142억) 수급이 모두 우호적이어서 단기 흐름을 지지합니다.',
+      value: {
+        foreign: '+258억',
+        institution: '+142억',
+      },
+    },
+
   ];
 
   return { cards };
 };
 
-const getStatusConfig = (status: CardStatus) => {
-  const configs = {
-    bullish: {
-      bg: 'bg-sky-50',
-      border: 'border-sky-300',
-      text: 'text-sky-700',
-      iconBg: 'bg-sky-100',
-      icon: TrendingUp,
-      arrow: ArrowUpRight,
+const getStatusConfig = (
+  direction: SignalDirection,
+  strength: SignalStrength
+) => {
+  const strengthStyle = {
+    high: {
+      positive: {
+        bg: 'bg-orange-100',
+        border: 'border-orange-400',
+        text: 'text-orange-800',
+        iconBg: 'bg-orange-200',
+        icon: TrendingUp,
+        arrow: ArrowUpRight,
+      },
+      negative: {
+        bg: 'bg-blue-100',
+        border: 'border-blue-400',
+        text: 'text-blue-800',
+        iconBg: 'bg-blue-200',
+        icon: TrendingDown,
+        arrow: ArrowDownRight,
+      },
     },
-    bearish: {
-      bg: 'bg-rose-50',
-      border: 'border-rose-300',
-      text: 'text-rose-700',
-      iconBg: 'bg-rose-100',
-      icon: TrendingDown,
-      arrow: ArrowDownRight,
+
+    medium: {
+      positive: {
+        bg: 'bg-orange-50',
+        border: 'border-orange-300',
+        text: 'text-orange-700',
+        iconBg: 'bg-orange-100',
+        icon: TrendingUp,
+        arrow: ArrowUpRight,
+      },
+      negative: {
+        bg: 'bg-blue-50',
+        border: 'border-blue-300',
+        text: 'text-blue-700',
+        iconBg: 'bg-blue-100',
+        icon: TrendingDown,
+        arrow: ArrowDownRight,
+      },
     },
-    neutral: {
-      bg: 'bg-slate-50',
-      border: 'border-slate-300',
-      text: 'text-slate-700',
-      iconBg: 'bg-slate-100',
-      icon: Activity,
-      arrow: Minus,
-    },
-    caution: {
-      bg: 'bg-amber-50',
-      border: 'border-amber-300',
-      text: 'text-amber-700',
-      iconBg: 'bg-amber-100',
-      icon: AlertCircle,
-      arrow: AlertCircle,
+
+    low: {
+      positive: {
+        bg: 'bg-orange-50',
+        border: 'border-orange-200',
+        text: 'text-orange-600',
+        iconBg: 'bg-orange-50',
+        icon: Activity,
+        arrow: Minus,
+      },
+      negative: {
+        bg: 'bg-blue-50',
+        border: 'border-blue-200',
+        text: 'text-blue-600',
+        iconBg: 'bg-blue-50',
+        icon: Activity,
+        arrow: Minus,
+      },
     },
   };
 
-  return configs[status];
+  return strengthStyle[strength][direction];
 };
 
-const getTurningPointStatus = (point: TurningPoint): CardStatus => {
+const getTurningPointSignal = (point: TurningPoint): {
+  direction: SignalDirection;
+  strength: SignalStrength;
+} => {
+  // 상승 신호
   if (
     point.type === 'golden_cross' ||
     point.type === 'macd_cross_up' ||
     point.type === 'bb_upper_breakout'
   ) {
-    return 'bullish';
+    return { direction: 'positive', strength: 'high' };
   }
 
+  // 하락 신호
   if (
     point.type === 'death_cross' ||
     point.type === 'macd_cross_down' ||
     point.type === 'bb_lower_breakout'
   ) {
-    return 'bearish';
+    return { direction: 'negative', strength: 'high' };
   }
 
+  // 이벤트성 (MSCI 등)
   if (point.type === 'msci_event') {
-    return 'caution';
+    return { direction: 'negative', strength: 'medium' };
   }
 
-  return 'neutral';
+  // 나머지 (약한 신호)
+  return { direction: 'negative', strength: 'low' };
 };
 
 const formatDate = (dateStr: string) => {
@@ -234,11 +291,11 @@ export default function ShortTermAnalysis({
     <div className="space-y-2 transition-all duration-300">
       <div
         className={`grid gap-2.5 transition-all duration-300 ${
-          isSidebarOpen ? 'grid-cols-4' : 'grid-cols-1'
+          isSidebarOpen ? 'grid-cols-6' : 'grid-cols-1'
         }`}
       >
         {data.cards.map((card) => {
-          const config = getStatusConfig(card.status);
+          const config = getStatusConfig(card.direction, card.strength);
           const StatusIcon = config.icon;
           const ArrowIcon = config.arrow;
 
@@ -260,12 +317,7 @@ export default function ShortTermAnalysis({
 
                   <h4 className="text-sm font-semibold mb-2 text-gray-900">{card.title}</h4>
 
-                  <Badge
-                    variant="outline"
-                    className={`text-xs ${config.bg} ${config.text} border ${config.border}`}
-                  >
-                    {card.badge}
-                  </Badge>
+
                 </>
               )}
 
@@ -279,12 +331,6 @@ export default function ShortTermAnalysis({
                     <div className="flex items-center justify-between mb-2 gap-3">
                       <h4 className="font-semibold text-gray-900">{card.title}</h4>
 
-                      <Badge
-                        variant="outline"
-                        className={`shrink-0 ${config.bg} ${config.text} border ${config.border}`}
-                      >
-                        {card.badge}
-                      </Badge>
                     </div>
 
                     <p className="text-sm text-gray-600 leading-relaxed mb-2">
@@ -423,8 +469,8 @@ export default function ShortTermAnalysis({
 
               <div className="space-y-4">
                 {sortedTurningPoints.map((point, index) => {
-                  const pointStatus = getTurningPointStatus(point);
-                  const config = getStatusConfig(pointStatus);
+                  const { direction, strength } = getTurningPointSignal(point);
+                  const config = getStatusConfig(direction, strength);
 
                   return (
                     <div key={`${point.date}-${point.type}-${index}`} className="relative pl-7">
