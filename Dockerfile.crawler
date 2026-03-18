@@ -29,4 +29,4 @@ RUN mkdir -p /app/logs
 ENV PYTHONUNBUFFERED=1
 
 # 8. 실행
-CMD ["python", "main_updater.py"]
+CMD ["python", "main_crawler.py"]
