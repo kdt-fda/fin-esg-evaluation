@@ -31,3 +31,19 @@ services:
       - ./logs:/app/logs
     tty: true
     stdin_open: true
+
+  interpreter:
+    build:
+      context: .
+      dockerfile: Dockerfile.interpreter
+      no_cache: true
+      pull: true
+    image: kyucc/fin-interpreter-bot:latest
+    container_name: stock-interpreter-container
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+    tty: true
+    stdin_open: true
