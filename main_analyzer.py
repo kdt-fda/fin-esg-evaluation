@@ -74,9 +74,11 @@ def run_total_analysis_process():
         logging.critical(f"🚨 시스템 중단 발생: {str(e)}", exc_info=True)
 
 if __name__ == "__main__":
-    schedule.every().day.at("23:00").do(run_total_analysis_process)
-    logging.info("⏰ 분석기 스케줄러: 매일 23:00에 업데이트를 시작합니다.")
+    run_total_analysis_process()
 
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+    #schedule.every().day.at("23:00").do(run_total_analysis_process)
+    #logging.info("⏰ 분석기 스케줄러: 매일 23:00에 업데이트를 시작합니다.")
+
+    #while True:
+    #    schedule.run_pending()
+    #    time.sleep(60)
