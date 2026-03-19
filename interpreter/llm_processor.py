@@ -104,7 +104,7 @@ def process_and_save_ticker(ticker: str, target_date):
             conn.close()
 
         # 상태값 반환
-        status_msg = "단기/장기 완료" if has_short and has_long else "단기만 완료" if has_short else "장기만 완료"
+        status_msg = "단기+장기 완료" if has_short and has_long else "단기만 완료" if has_short else "장기만 완료"
         return True, ticker, stock_name, status_msg
 
     except Exception as e:

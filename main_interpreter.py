@@ -43,7 +43,7 @@ def run_total_interpretation_process():
 
     try:
         start = datetime.now()
-        logging.info("단기 / 중장기 LLM 해석 파이프라인 가동...")
+        logging.info("단기 + 중장기 LLM 해석 파이프라인 가동...")
 
         run_llm_pipeline()
         
