@@ -64,4 +64,7 @@ class FeatureSelector:
         
         X = df[final_cols]
         
+        stock_name = df['stock_name'].iloc[0] if 'stock_name' in df.columns else "Unknown"
+        print(f"  └─ [{stock_name}] {mode.upper()} 모델 피처 셀렉션 완료 -> {X.shape}")
+        
         return X

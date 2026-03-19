@@ -181,5 +181,4 @@ class StockDataJoiner:
         df_final = df_final.loc[:, ~df_final.columns.duplicated()]
         df_final = df_final.ffill()
 
-        print(f"[{stock_name}] 모델링 데이터셋 생성 완료 -> {df_final.shape}")
         return df_final
