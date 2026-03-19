@@ -61,12 +61,6 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
     conn = _connect()
     try:
         kospi_df = pd.read_sql("SELECT ticker, stock_name FROM KOSPI200_STOCKS_TB", conn)
-
-        # SHAP 분석 시 공통 파생 지표 제외
-        common_df = pd.read_sql("SELECT * FROM COMMON_TB LIMIT 1", conn)
-        
-        common_cols = [c for c in common_df.columns if c not in ['trade_date', 'date']]
-        global_exclude_bases = set(common_cols + ['msci_event'])
     finally:
         conn.close()
     
@@ -237,9 +231,7 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
         agg_shap = {}
         for j, f_name in enumerate(X_inf.columns):
             base_f = f_name.split('_lag')[0]
-            # 공통 파생 지표는 SHAP Top 요인에서 제외
-            if base_f not in global_exclude_bases:
-                agg_shap[base_f] = agg_shap.get(base_f, 0) + sv[j]
+            agg_shap[base_f] = agg_shap.get(base_f, 0) + sv[j]
             
         # 긍정 Top 3 / 부정 Top 3
         pos_feats = sorted([(k, v) for k, v in agg_shap.items() if v > 0], key=lambda x: x[1], reverse=True)[:3]
