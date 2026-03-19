@@ -244,7 +244,7 @@ def process_raw_data(all_long_df, ticker):
 
 def add_market_data(df, ticker, shares_map):
     try:
-        shares = shares_map.get(ticker, np.nan)
+        shares = shares_map.get(str(ticker).zfill(6), np.nan)
         
         start_date = f"{int(df['year'].min())}-01-01"
         price_df = fdr.DataReader(ticker, start_date)
@@ -264,17 +264,22 @@ def add_market_data(df, ticker, shares_map):
         if "eps" in df.columns:
             eps_clean = pd.to_numeric(df["eps"], errors="coerce").replace(0, np.nan)
             df["per"] = df["price"] / eps_clean
+            if "per_raw" in df.columns:
+                df["per"] = df["per"].fillna(df["per_raw"])
         else:
             df["per"] = df.get("per_raw", np.nan)
 
         if "ebitda" in df.columns:
-            s_debt = df["short_debt"] if "short_debt" in df.columns else 0
-            l_debt = df["long_debt"] if "long_debt" in df.columns else 0
-            cash_val = df["cash"] if "cash" in df.columns else 0
+            s_debt = df["short_debt"].fillna(0) if "short_debt" in df.columns else 0
+            l_debt = df["long_debt"].fillna(0) if "long_debt" in df.columns else 0
+            cash_val = df["cash"].fillna(0) if "cash" in df.columns else 0
             
             ev = df["market_cap"] + s_debt + l_debt - cash_val
             ebitda_clean = pd.to_numeric(df["ebitda"], errors="coerce").replace(0, np.nan)
             df["ev_ebitda"] = ev / ebitda_clean
+            
+            if "ev_ebitda_raw" in df.columns:
+                df["ev_ebitda"] = df["ev_ebitda"].fillna(df["ev_ebitda_raw"])
         else:
             df["ev_ebitda"] = df.get("ev_ebitda_raw", np.nan)
 
@@ -367,7 +372,7 @@ def run_fundamental_crawler(max_workers=3):
             try:
                 df_cap = stock.get_market_cap(target_date, market="KOSPI")
                 if not df_cap.empty and '상장주식수' in df_cap.columns:
-                    shares_map = df_cap['상장주식수'].to_dict()
+                    shares_map = {str(k).strip().zfill(6): int(v) for k, v in df_cap['상장주식수'].items() if pd.notnull(v)}
                     print(f"✅ [{target_date}] 기준 상장주식수 로딩 완료")
                     break
             except:
