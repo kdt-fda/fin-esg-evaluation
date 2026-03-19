@@ -1,3 +1,5 @@
+import pandas as pd
+
 class FeatureSelector:
     def __init__(self):
         # 1. 공통 피쳐
@@ -30,17 +32,14 @@ class FeatureSelector:
 
     def _get_sector_derivative_features(self, df):
         """통합된 데이터에서 섹터별 파생 지표를 동적으로 추출"""
-        try:
-            cols = list(df.columns)
-            start_idx = cols.index('cli_lag6') + 1
-            end_idx = cols.index('revenue')
-            
-            if start_idx < end_idx:
-                sector_features = cols[start_idx:end_idx]
-                return sector_features
-            return []
-        except (ValueError, IndexError):
-            return []
+        known_cols = set(self.common_base + self.short_term_list + self.long_term_list)
+        
+        sector_features = []
+        for c in df.columns:
+            if c not in known_cols and pd.api.types.is_numeric_dtype(df[c]) and not c.startswith('target_'):
+                sector_features.append(c)
+                
+        return sector_features
 
     def get_features(self, df, mode='short'):
         """모드에 따른 학습용 피처셋(X) 반환"""
