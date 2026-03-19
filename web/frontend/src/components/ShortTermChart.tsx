@@ -1,20 +1,9 @@
 import { useMemo, useState } from 'react';
-import { Area, AreaChart, CartesianGrid, Tooltip, ResponsiveContainer, XAxis, YAxis} from 'recharts';
-import { Info, X } from 'lucide-react';
-
-interface PredictionReason {
-  factor: string;
-  impact: string;
-  contribution: number;
-}
-
-interface ChartDataPoint {
-  date: string;
-  actual?: number;
-  predicted?: number;
-  reason?: PredictionReason[];
-  changeReason?: string;
-}
+import {Area,AreaChart,CartesianGrid,Tooltip,ResponsiveContainer,XAxis,YAxis,} from 'recharts';
+import { Info } from 'lucide-react';
+import ChartInfoModal from './charts/ChartInfoModal';
+import ShortChartTooltip from './charts/ChartTooltip';
+import type { ChartDataPoint } from '../types/chart';
 
 interface ShortTermPredictionChartProps {
   title: string;
@@ -57,7 +46,9 @@ export default function ShortTermPredictionChart({
 
   const spansMultipleYears = useMemo(() => {
     if (visibleData.length < 2) return false;
-    const years = visibleData.map((d) => getYear(d.date)).filter((y): y is number => y !== null);
+    const years = visibleData
+      .map((d) => getYear(d.date))
+      .filter((y): y is number => y !== null);
     return new Set(years).size >= 2;
   }, [visibleData]);
 
@@ -75,8 +66,6 @@ export default function ShortTermPredictionChart({
     return Math.max(0, Math.min(100, Number(confidence.toFixed(1))));
   }, [confidence]);
 
-
-
   const axisMeta = useMemo(() => {
     const ticks = new Set<string>();
     const yearMarkers = new Set<string>();
@@ -86,12 +75,10 @@ export default function ShortTermPredictionChart({
       const previousYear =
         index > 0 ? getYear(visibleData[index - 1].date) : null;
 
-      // 기본 날짜 tick
       if (index % (tickInterval + 1) === 0) {
         ticks.add(item.date);
       }
 
-      // 연도 시작 지점 tick
       if (currentYear !== null && (index === 0 || currentYear !== previousYear)) {
         ticks.add(item.date);
         yearMarkers.add(item.date);
@@ -108,7 +95,6 @@ export default function ShortTermPredictionChart({
     };
   }, [visibleData, tickInterval]);
 
-
   const CustomXAxisTick = ({ x, y, payload }: any) => {
     const value: string = payload?.value ?? '';
     const label = formatTickLabel(value);
@@ -120,7 +106,6 @@ export default function ShortTermPredictionChart({
 
     return (
       <g>
-        {/* 연도 시작 지점이면 날짜 대신 연도만 아래에 표시 */}
         {!isYearMarker && (
           <text
             x={x}
@@ -148,32 +133,6 @@ export default function ShortTermPredictionChart({
     );
   };
 
-
-  const CustomTooltip = ({ active, payload }: any) => {
-    if (active && payload && payload.length) {
-      const d: ChartDataPoint = payload[0].payload;
-      return (
-        <div className="bg-white p-4 rounded-lg shadow-lg border border-gray-200 max-w-xs">
-          <p className="font-semibold text-gray-900 mb-2">{formatTickLabel(d.date)}</p>
-          {d.actual !== undefined && (
-            <p className="text-sm text-gray-700">
-              실제: <span className="font-semibold">{d.actual.toLocaleString()}원</span>
-            </p>
-          )}
-          {d.predicted !== undefined && (
-            <p className="text-sm text-blue-600">
-              예측: <span className="font-semibold">{d.predicted.toLocaleString()}원</span>
-            </p>
-          )}
-        </div>
-      );
-    }
-    return null;
-  };
-
-
-
-
   return (
     <div className="bg-white rounded-xl shadow-sm p-6 flex-1">
       <div className="flex justify-between items-start mb-6">
@@ -185,12 +144,18 @@ export default function ShortTermPredictionChart({
               <div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full ${
-                    normalizedConfidence >= 80 ? 'bg-green-500' : normalizedConfidence >= 60 ? 'bg-yellow-500' : 'bg-red-500'
+                    normalizedConfidence >= 80
+                      ? 'bg-green-500'
+                      : normalizedConfidence >= 60
+                      ? 'bg-yellow-500'
+                      : 'bg-red-500'
                   }`}
                   style={{ width: `${normalizedConfidence}%` }}
                 />
               </div>
-              <span className="text-sm font-semibold text-gray-900">{confidence}%</span>
+              <span className="text-sm font-semibold text-gray-900">
+                {normalizedConfidence}%
+              </span>
             </div>
           </div>
         </div>
@@ -221,7 +186,7 @@ export default function ShortTermPredictionChart({
             <XAxis
               dataKey="date"
               tick={<CustomXAxisTick />}
-              ticks = {axisMeta.displayTicks}
+              ticks={axisMeta.displayTicks}
               tickLine={{ stroke: '#e5e7eb' }}
               interval={0}
               height={spansMultipleYears ? 48 : 25}
@@ -233,7 +198,9 @@ export default function ShortTermPredictionChart({
               tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`}
             />
 
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip
+              content={<ShortChartTooltip formatTickLabel={formatTickLabel} />}
+            />
 
             <Area
               type="monotone"
@@ -273,7 +240,9 @@ export default function ShortTermPredictionChart({
                 style={{
                   background: `linear-gradient(to right, #e5e7eb 0%, #e5e7eb ${
                     sliderMax > 0 ? (clampedSlider / sliderMax) * 100 : 0
-                  }%, #3b82f6 ${sliderMax > 0 ? (clampedSlider / sliderMax) * 100 : 0}%, #3b82f6 100%)`,
+                  }%, #3b82f6 ${
+                    sliderMax > 0 ? (clampedSlider / sliderMax) * 100 : 0
+                  }%, #3b82f6 100%)`,
                 }}
               />
             </div>
@@ -301,75 +270,54 @@ export default function ShortTermPredictionChart({
         </div>
       )}
 
-      {showInfoModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
-          onClick={() => setShowInfoModal(false)}
-        >
-          <div
-            className="mx-4 w-full max-w-lg rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-5 flex items-center justify-between">
-              <h4 className="text-lg font-bold text-gray-900">단기 예측 차트 정보</h4>
-              <button
-                type="button"
-                onClick={() => setShowInfoModal(false)}
-                className="text-gray-400 transition-colors hover:text-gray-600"
-                aria-label="닫기"
-              >
-                <X size={22} />
-              </button>
-            </div>
-
-            <div className="space-y-4 text-sm leading-6 text-gray-700">
-              <div>
-                <h5 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                  <div className="w-1 h-4 bg-blue-500 rounded-full"></div>
-                  차트 개요
-                </h5>
-                <p>
-                  이 차트는 향후 20 영업일까지의 주가 변동을 예측합니다. 과거 3년간의 주가 데이터를 기반으로 단기 변동성 요인을 분석하여 일별 예측값을 제공합니다.
-                </p>
-              </div>
-
-              <div>
-                <h5 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                  <div className="w-1 h-4 bg-green-500 rounded-full"></div>
-                  예측 신뢰도: {normalizedConfidence}%
-                </h5>
-                <p>
-                  예측 신뢰도는 방향 적중률과 가격 오차를 함께 반영한 점수입니다.
-                </p>
-              </div>
-
-              <div>
-                <h5 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                  <div className="w-1 h-4 bg-purple-500 rounded-full"></div>
-                  주요 분석 요소
-                </h5>
-                <ul className="list-disc space-y-1 pl-5">
-                  <li>주가 기본 흐름: 시가, 고가, 저가, 종가, 거래량</li>
-                  <li>추세 지표: 5일·20일 이동평균선, 골든크로스, 데드크로스</li>
-                  <li>수급 지표: 외국인·기관·개인 순매수 금액</li>
-                  <li>기술적 지표: RSI, MACD, MACD 시그널</li>
-                  <li>변동성 지표: 볼린저밴드 상단/하단, 밴드 돌파 여부</li>
-                  <li>외부 변수: 나스닥 지수, 원/달러 환율, 유가(WTI)</li>
-                  <li>이벤트 변수: MSCI 리밸런싱 여부, 공매도 잔고</li>
-                </ul>
-              </div>
-
-              <div className="border-t border-gray-200 pt-4">
-                <p className="text-xs text-gray-500">
-                  💡 차트에 마우스를 올리면 해당 시점의 실제값과 예측값을 확인할 수 있습니다.
-                </p>
-              </div>
-            </div>
-          </div>
+      <ChartInfoModal
+        open={showInfoModal}
+        onClose={() => setShowInfoModal(false)}
+        title="단기 예측 차트 정보"
+      >
+        <div>
+          <h5 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+            <div className="w-1 h-4 bg-blue-500 rounded-full"></div>
+            차트 개요
+          </h5>
+          <p>
+            이 차트는 향후 20 영업일까지의 주가 변동을 예측합니다. 과거 3년간의 주가 데이터를 기반으로
+            단기 변동성 요인을 분석하여 일별 예측값을 제공합니다.
+          </p>
         </div>
-      )}
+
+        <div>
+          <h5 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+            <div className="w-1 h-4 bg-green-500 rounded-full"></div>
+            예측 신뢰도: {normalizedConfidence}%
+          </h5>
+          <p>
+            예측 신뢰도는 방향 적중률과 가격 오차를 함께 반영한 점수입니다.
+          </p>
+        </div>
+
+        <div>
+          <h5 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+            <div className="w-1 h-4 bg-purple-500 rounded-full"></div>
+            주요 분석 요소
+          </h5>
+          <ul className="list-disc space-y-1 pl-5">
+            <li>주가 기본 흐름: 시가, 고가, 저가, 종가, 거래량</li>
+            <li>추세 지표: 5일·20일 이동평균선, 골든크로스, 데드크로스</li>
+            <li>수급 지표: 외국인·기관·개인 순매수 금액</li>
+            <li>기술적 지표: RSI, MACD, MACD 시그널</li>
+            <li>변동성 지표: 볼린저밴드 상단/하단, 밴드 돌파 여부</li>
+            <li>외부 변수: 나스닥 지수, 원/달러 환율, 유가(WTI)</li>
+            <li>이벤트 변수: MSCI 리밸런싱 여부, 공매도 잔고</li>
+          </ul>
+        </div>
+
+        <div className="border-t border-gray-200 pt-4">
+          <p className="text-xs text-gray-500">
+            💡 차트에 마우스를 올리면 해당 시점의 실제값과 예측값을 확인할 수 있습니다.
+          </p>
+        </div>
+      </ChartInfoModal>
     </div>
   );
 }
-
-export type { ChartDataPoint };

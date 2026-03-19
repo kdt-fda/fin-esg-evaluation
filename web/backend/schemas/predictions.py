@@ -4,7 +4,7 @@ from typing import List, Optional
 class PredictionReason(BaseModel):
     factor: str
     impact: str
-    contribution: float
+    contribution: Optional[float] = None
 
 class ChartDataPoint(BaseModel):
     date: str
@@ -14,6 +14,6 @@ class ChartDataPoint(BaseModel):
     changeReason: Optional[str] = None
 
 class PredictionResponse(BaseModel):
-    confidence: int
+    confidence: float
     data: List[ChartDataPoint]
     pastCount: Optional[int] = None

@@ -3,39 +3,14 @@ import StockSidebar from './components/StockSidebar';
 import type { Stock } from './components/StockSidebar';
 
 import ShortTermPredictionChart from './components/ShortTermChart';
-import type { ChartDataPoint } from './components/ShortTermChart';
 import LongTermChart from './components/LongTermChart';
 import ShortTermAnalysis from './components/ShortTermAnalysis';
 import LongTermAnalysis from './components/LongTermAnalysis';
 
+import type { ChartDataPoint } from './types/chart';
+import useDashboardData from './hooks/useDashboard';
+
 import { Activity, Clock, Menu, X, ChevronDown, ChevronUp } from 'lucide-react';
-
-type PredictionResponse = {
-  confidence: number;
-  data: ChartDataPoint[];
-  pastCount?: number;
-};
-
-type StockPricePoint = {
-  date: string;
-  actual?: number;
-};
-
-/* ===== [ADD START] long chart 전용 타입 추가 ===== */
-type LongTermItem = {
-  code: string;
-  name: string;
-  sector: string;
-  score: number;
-};
-
-type LongPredictionResponse = {
-  confidence: number;
-  data: LongTermItem[];
-};
-/* ===== [ADD END] long chart 전용 타입 추가 ===== */
-
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000';
 
 function formatYYYYMMDD(d: Date) {
   return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
@@ -43,64 +18,37 @@ function formatYYYYMMDD(d: Date) {
 
 function calcPastCount(points: ChartDataPoint[]) {
   if (!points || points.length === 0) return 0;
-  const firstPredIdx = points.findIndex((p) => p.predicted !== undefined && p.predicted !== null);
+  const firstPredIdx = points.findIndex(
+    (p) => p.predicted !== undefined && p.predicted !== null
+  );
   return firstPredIdx === -1 ? points.length : firstPredIdx;
 }
 
-function mergeShortChartData(
-  actualData: StockPricePoint[],
-  predictedData: ChartDataPoint[]
-): ChartDataPoint[] {
-  const mergedMap = new Map<string, ChartDataPoint>();
-
-  for (const item of actualData) {
-    mergedMap.set(item.date, {
-      date: item.date,
-      actual: item.actual,
-    });
-  }
-
-  for (const item of predictedData) {
-    const existing = mergedMap.get(item.date);
-
-    if (existing) {
-      mergedMap.set(item.date, {
-        ...existing,
-        predicted: item.predicted,
-        reason: item.reason,
-        changeReason: item.changeReason,
-      });
-    } else {
-      mergedMap.set(item.date, {
-        date: item.date,
-        predicted: item.predicted,
-        reason: item.reason,
-        changeReason: item.changeReason,
-      });
-    }
-  }
-
-  return Array.from(mergedMap.values()).sort(
-    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-  );
-}
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000';
 
 export default function App() {
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
 
-  const [shortTermData, setShortTermData] = useState<ChartDataPoint[]>([]);
-  const [longTermData, setLongTermData] = useState<LongTermItem[]>([]);
-  const [shortConfidence, setShortConfidence] = useState<number>(0);
-  const [longConfidence, setLongConfidence] = useState<number>(0);
-
   const [timeUntilUpdate, setTimeUntilUpdate] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [stockLoadingError, setStockLoadingError] = useState<string | null>(null);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isModelInfoExpanded, setIsModelInfoExpanded] = useState(false);
-  const shortPastCount = useMemo(() => calcPastCount(shortTermData), [shortTermData]);
+
+  const {
+    shortTermData,
+    longTermData,
+    shortConfidence,
+    longConfidence,
+    loading,
+    errorMsg,
+  } = useDashboardData(selectedStock?.code);
+
+  const shortPastCount = useMemo(
+    () => calcPastCount(shortTermData),
+    [shortTermData]
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -125,7 +73,7 @@ export default function App() {
         if (err?.name === 'AbortError') return;
 
         console.error(err);
-        setErrorMsg(err?.message ?? '종목 목록을 불러오지 못했습니다.');
+        setStockLoadingError(err?.message ?? '종목 목록을 불러오지 못했습니다.');
         setStocks([]);
         setSelectedStock(null);
       }
@@ -147,7 +95,9 @@ export default function App() {
       const hours = Math.floor(diff / (1000 * 60 * 60));
       const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
 
-      setTimeUntilUpdate(`${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`);
+      setTimeUntilUpdate(
+        `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+      );
     };
 
     updateTimer();
@@ -156,112 +106,15 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    if (!selectedStock) return;
-
-    const controller = new AbortController();
-
-    const fetchData = async () => {
-      setLoading(true);
-      setErrorMsg(null);
-
-      try {
-        const code = selectedStock.code;
-
-        const priceRes = await fetch(`${API_BASE}/api/stocks/${code}/prices`, {
-          signal: controller.signal,
-        });
-
-        if (!priceRes.ok) {
-          throw new Error(await priceRes.text());
-        }
-
-        const priceJson = (await priceRes.json()) as StockPricePoint[];
-
-        let shortJson: PredictionResponse = {
-          confidence: 0,
-          data: [],
-          pastCount: 0,
-        };
-
-        let longJson: LongPredictionResponse = {
-          confidence: 0,
-          data: [],
-        };
-
-        try {
-          const shortRes = await fetch(`${API_BASE}/api/predictions/short?code=${code}`, {
-            signal: controller.signal,
-          });
-
-          if (shortRes.ok) {
-            shortJson = (await shortRes.json()) as PredictionResponse;
-          } else {
-            console.warn('short prediction not ready:', await shortRes.text());
-          }
-        } catch (err) {
-          console.warn('short prediction fetch failed:', err);
-        }
-
-        try {
-          const longRes = await fetch(`${API_BASE}/api/predictions/long?code=${code}`, {
-            signal: controller.signal,
-          });
-
-          /* ===== [ADD START] long API는 실패해도 에러로 막지 않고 넘어가기 ===== */
-          if (longRes.ok) {
-            longJson = (await longRes.json()) as LongPredictionResponse;
-          } else {
-            console.warn('long prediction not ready:', await longRes.text());
-            longJson = {
-              confidence: 0,
-              data: [],
-            };
-          }
-          /* ===== [ADD END] long API는 실패해도 에러로 막지 않고 넘어가기 ===== */
-        } catch (err) {
-          /* ===== [ADD START] long API fetch 실패 시에도 빈 데이터로 처리 ===== */
-          console.warn('long prediction fetch failed:', err);
-          longJson = {
-            confidence: 0,
-            data: [],
-          };
-          /* ===== [ADD END] long API fetch 실패 시에도 빈 데이터로 처리 ===== */
-        }
-
-        const mergedShortData = mergeShortChartData(
-          priceJson ?? [],
-          shortJson.data ?? []
-        );
-
-        setShortTermData(mergedShortData);
-        setLongTermData(longJson.data ?? []);
-        setShortConfidence(shortJson.confidence ?? 0);
-        setLongConfidence(longJson.confidence ?? 0);
-      } catch (err: any) {
-        if (err?.name === 'AbortError') return;
-
-        console.error(err);
-        setErrorMsg(err?.message ?? '데이터를 불러오지 못했습니다.');
-        setShortTermData([]);
-        setLongTermData([]);
-        setShortConfidence(0);
-        setLongConfidence(0);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-    return () => controller.abort();
-  }, [selectedStock?.code]);
-
   return (
     <div className="flex h-screen bg-gray-50">
       <div className={`transition-all duration-300 ${isSidebarOpen ? 'w-80' : 'w-0'}`}>
         {isSidebarOpen &&
           (selectedStock ? (
-            <StockSidebar selectedStock={selectedStock} onSelectStock={setSelectedStock} />
+            <StockSidebar
+              selectedStock={selectedStock}
+              onSelectStock={setSelectedStock}
+            />
           ) : (
             <div className="w-80 bg-white border-r border-gray-200 h-screen flex flex-col">
               <div className="p-6 border-b border-gray-200">
@@ -284,7 +137,9 @@ export default function App() {
         <header className="bg-white border-b border-gray-200 px-8 py-6">
           <div className="flex items-center justify-center gap-3 mb-2">
             <Activity className="text-blue-600" size={28} />
-            <h1 className="text-3xl font-bold text-gray-900">설명 가능한 주가 예측 기반 투자 참고 플랫폼</h1>
+            <h1 className="text-3xl font-bold text-gray-900">
+              설명 가능한 주가 예측 기반 투자 참고 플랫폼
+            </h1>
           </div>
 
           <div className="flex items-center justify-center gap-2">
@@ -345,11 +200,11 @@ export default function App() {
                 stockCode={selectedStock?.code ?? '-'}
                 currentSector={selectedStock?.sector ?? '-'}
                 data={longTermData}
-                isExpanded={!isSidebarOpen}
+                isSidebarOpen={isSidebarOpen}
               />
             </div>
           </div>
-          
+
           <div className="bg-white rounded-xl shadow-sm p-6">
             <button
               onClick={() => setIsModelInfoExpanded(!isModelInfoExpanded)}
@@ -367,22 +222,29 @@ export default function App() {
               <div className="mt-4 pt-4 border-t border-gray-200">
                 <div className="space-y-3 text-xs text-gray-600 leading-relaxed">
                   <p>
-                    <span className="font-semibold text-gray-800">■ 예측 모델 개요:</span> 본 플랫폼은 설명 가능한 AI 기반 예측 구조를 활용하여 주가 흐름을 시각화합니다.
-                    실제 주가 데이터, 예측 결과, 주요 영향 요인, 설명 문장을 함께 제공하여 사용자가 예측 흐름을 직관적으로 이해할 수 있도록 구성했습니다.
+                    <span className="font-semibold text-gray-800">■ 예측 모델 개요:</span>{' '}
+                    본 플랫폼은 설명 가능한 AI 기반 예측 구조를 활용하여 주가 흐름을 시각화합니다.
+                    실제 주가 데이터, 예측 결과, 주요 영향 요인, 설명 문장을 함께 제공하여
+                    사용자가 예측 흐름을 직관적으로 이해할 수 있도록 구성했습니다.
                   </p>
 
                   <p>
-                    <span className="font-semibold text-gray-800">■ 단기 예측:</span> 향후 단기 구간의 예측값을 기준으로 차트를 표시합니다.
-                    예측 구간에서는 예측 가격과 함께 근거 요인 및 설명 문장을 확인할 수 있으며, 슬라이더로 과거 구간 범위를 조절할 수 있습니다.
+                    <span className="font-semibold text-gray-800">■ 단기 예측:</span>{' '}
+                    향후 단기 구간의 예측값을 기준으로 차트를 표시합니다.
+                    예측 구간에서는 예측 가격과 함께 근거 요인 및 설명 문장을 확인할 수 있으며,
+                    슬라이더로 과거 구간 범위를 조절할 수 있습니다.
                   </p>
 
                   <p>
-                    <span className="font-semibold text-gray-800">■ 중장기 예측:</span> 중장기 구간은 월 단위 흐름을 기준으로 요약해 보여줍니다.
-                    장기적인 실적, 거시 지표, 산업 성장성 같은 요소를 중심으로 방향성을 해석할 수 있도록 구성됩니다.
+                    <span className="font-semibold text-gray-800">■ 중장기 예측:</span>{' '}
+                    중장기 구간은 월 단위 흐름을 기준으로 요약해 보여줍니다.
+                    장기적인 실적, 거시 지표, 산업 성장성 같은 요소를 중심으로
+                    방향성을 해석할 수 있도록 구성됩니다.
                   </p>
 
                   <p>
-                    <span className="font-semibold text-gray-800">■ 예측 근거:</span> 차트의 예측 구간에 마우스를 올리면 해당 시점의 예측값을 확인할 수 있고,
+                    <span className="font-semibold text-gray-800">■ 예측 근거:</span>{' '}
+                    차트의 예측 구간에 마우스를 올리면 해당 시점의 예측값을 확인할 수 있고,
                     클릭하면 예측에 영향을 준 주요 요인과 설명을 상세 페이지에서 볼 수 있습니다.
                   </p>
 
@@ -395,7 +257,11 @@ export default function App() {
           </div>
 
           {loading && <p className="mt-4 text-sm text-gray-500">불러오는 중...</p>}
-          {errorMsg && <p className="mt-4 text-sm text-red-600">{errorMsg}</p>}
+          {(errorMsg || stockLoadingError) && (
+            <p className="mt-4 text-sm text-red-600">
+              {errorMsg ?? stockLoadingError}
+            </p>
+          )}
         </main>
 
         <footer className="relative bg-white border-t border-gray-200 px-8 py-4">
@@ -410,7 +276,9 @@ export default function App() {
             </div>
           </div>
 
-          <div className="absolute right-4 bottom-3 text-sm text-gray-400">© Team MER-M</div>
+          <div className="absolute right-4 bottom-3 text-sm text-gray-400">
+            © Team MER-M
+          </div>
         </footer>
       </div>
     </div>
