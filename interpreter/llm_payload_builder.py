@@ -3,11 +3,19 @@ from __future__ import annotations
 from typing import Dict, Any, List
 import json
 import os
+from pathlib import Path
 
 import pymysql
 from dotenv import load_dotenv
 
 load_dotenv()
+
+BASE_DIR = Path(__file__).resolve().parent
+MAPPING_PATH = BASE_DIR / "feature_mapping.json"
+
+if MAPPING_PATH.exists():
+    with open(MAPPING_PATH, "r", encoding="utf-8") as f:
+        FEATURE_MAP = json.load(f)
 
 
 def parse_shap_factors(model_result: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -22,7 +30,7 @@ def parse_shap_factors(model_result: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     return [
         {
-            "feature": str(feature),
+            "feature": FEATURE_MAP.get(str(feature), str(feature)),
             "shap_value": float(value),
         }
         for feature, value in zip(features, values)
