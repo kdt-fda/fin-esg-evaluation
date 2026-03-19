@@ -8,7 +8,7 @@ from typing import Dict, Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from shap_llm_builder import build_combined_llm_payload
+from interpreter.llm_payload_builder import build_combined_llm_payload
 
 load_dotenv()
 
