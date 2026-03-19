@@ -184,7 +184,7 @@ def build_feature_contexts(cur, ticker: str, interpretation: dict[str, Any] | No
         if not isinstance(signal, dict):
             continue
 
-        feature_key = signal.get("feature")
+        feature_key = signal.get("feature_key") or signal.get("feature")
         if not feature_key:
             continue
 

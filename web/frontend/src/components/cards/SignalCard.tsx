@@ -2,9 +2,6 @@ import {
   TrendingUp,
   TrendingDown,
   Activity,
-  ArrowUpRight,
-  ArrowDownRight,
-  Minus,
 } from 'lucide-react';
 import { Card } from '../ui/card';
 import type {
@@ -33,7 +30,6 @@ const getStatusConfig = (
         text: 'text-orange-800',
         iconBg: 'bg-orange-200',
         icon: TrendingUp,
-        arrow: ArrowUpRight,
       },
       negative: {
         bg: 'bg-blue-100',
@@ -41,7 +37,6 @@ const getStatusConfig = (
         text: 'text-blue-800',
         iconBg: 'bg-blue-200',
         icon: TrendingDown,
-        arrow: ArrowDownRight,
       },
     },
     medium: {
@@ -51,7 +46,6 @@ const getStatusConfig = (
         text: 'text-orange-700',
         iconBg: 'bg-orange-100',
         icon: TrendingUp,
-        arrow: ArrowUpRight,
       },
       negative: {
         bg: 'bg-blue-50',
@@ -59,7 +53,6 @@ const getStatusConfig = (
         text: 'text-blue-700',
         iconBg: 'bg-blue-100',
         icon: TrendingDown,
-        arrow: ArrowDownRight,
       },
     },
     low: {
@@ -69,7 +62,6 @@ const getStatusConfig = (
         text: 'text-orange-600',
         iconBg: 'bg-orange-50',
         icon: Activity,
-        arrow: Minus,
       },
       negative: {
         bg: 'bg-blue-50',
@@ -77,7 +69,6 @@ const getStatusConfig = (
         text: 'text-blue-600',
         iconBg: 'bg-blue-50',
         icon: Activity,
-        arrow: Minus,
       },
     },
   };
@@ -92,7 +83,6 @@ export default function SignalCard({
 }: SignalCardProps) {
   const config = getStatusConfig(item.direction, item.strength);
   const StatusIcon = config.icon;
-  const ArrowIcon = config.arrow;
 
   const formatFeatureValue = (value: number | string | null | undefined) => {
     if (value === null || value === undefined) return '-';
@@ -108,6 +98,11 @@ export default function SignalCard({
     return String(value);
   };
 
+  const formatShapValue = (value: number | null | undefined) => {
+    if (value === null || value === undefined) return '-';
+    return value.toFixed(3);
+  };
+
   return (
     <Card
       className={`p-3 border transition-all duration-300 hover:shadow-md ${
@@ -120,7 +115,13 @@ export default function SignalCard({
             <div className={`p-1.5 rounded ${config.iconBg}`}>
               <StatusIcon className={`h-4 w-4 ${config.text}`} />
             </div>
-            <ArrowIcon className={`h-4 w-4 ${config.text}`} />
+
+            <div className="text-right">
+              <p className="text-[10px] text-gray-500 leading-none mb-1">SHAP</p>
+              <p className={`text-xs font-semibold ${config.text}`}>
+                {formatShapValue(item.shap_value)}
+              </p>
+            </div>
           </div>
 
           <h4 className="text-sm font-semibold mb-2 text-gray-900">
@@ -134,8 +135,15 @@ export default function SignalCard({
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between mb-2 gap-3">
+            <div className="flex items-start justify-between mb-2 gap-3">
               <h4 className="font-semibold text-gray-900">{item.signal}</h4>
+
+              <div className="text-right shrink-0">
+                <p className="text-[10px] text-gray-500 leading-none mb-1">SHAP</p>
+                <p className={`text-xs font-semibold ${config.text}`}>
+                  {formatShapValue(item.shap_value)}
+                </p>
+              </div>
             </div>
 
             <p className="text-sm text-gray-600 leading-relaxed">

@@ -62,7 +62,7 @@ export default function ShortTermAnalysis({
               key={`${signal.feature}-${index}`}
               item={signal}
               isCompact={isSidebarOpen}
-              featureValue={featureContexts?.[signal.feature] ?? null}
+              featureValue={featureContexts?.[signal.feature_key ?? signal.feature] ?? null}
             />
           ))}
       </div>
