@@ -68,6 +68,9 @@ def process_and_save_ticker(ticker: str, target_date):
 
         if not has_short and not has_long:
             return False, ticker, "단기/장기 예측 데이터가 모두 없습니다."
+        
+        # 종목명 추출
+        stock_name = short_res.get("stock_name") or long_res.get("stock_name")
 
         # LLM 해석 생성
         interpretation = generate_combined_interpretation(short_result=short_res, long_result=long_res)
@@ -102,7 +105,7 @@ def process_and_save_ticker(ticker: str, target_date):
 
         # 상태값 반환
         status_msg = "단기/장기 완료" if has_short and has_long else "단기만 완료" if has_short else "장기만 완료"
-        return True, ticker, status_msg
+        return True, ticker, stock_name, status_msg
 
     except Exception as e:
         return False, ticker, str(e)
@@ -119,16 +122,16 @@ def run_llm_pipeline():
     
     success_count = 0
     fail_count = 0
-    max_workers = 5 
+    max_workers = 5
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(process_and_save_ticker, ticker, target_date): ticker for ticker in tickers}
         
         for future in concurrent.futures.as_completed(futures):
-            success, ticker, msg = future.result()
+            success, ticker, stock_name, msg = future.result()
             if success:
                 success_count += 1
-                print(f"  ✅ [{success_count}/{len(tickers)}] {ticker} ({msg})")
+                print(f"  ✅ [{success_count}/{len(tickers)}] {stock_name}({ticker}) ({msg})")
             else:
                 fail_count += 1
                 print(f"  ❌ [실패] {ticker}: {msg}")
