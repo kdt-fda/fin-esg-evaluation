@@ -87,7 +87,8 @@ export default function SignalCard({
     >
       {isCompact ? (
         <>
-          <div className="flex items-start justify-between mb-3">
+          {/* 아이콘 + SHAP */}
+          <div className="flex items-start justify-between mb-2">
             <div className={`p-1.5 rounded ${config.iconBg}`}>
               <StatusIcon className={`h-4 w-4 ${config.text}`} />
             </div>
@@ -96,39 +97,42 @@ export default function SignalCard({
               <p className="text-[9px] text-gray-500 leading-none mb-1 tracking-tight">
                 SHAP
               </p>
-              <p className={`text-[14px] font-medium leading-none ${config.text}`}>
+              <p className={`text-[12px] font-medium leading-none ${config.text}`}>
                 {formatShapValue(item.shap_value)}
               </p>
             </div>
           </div>
 
-          <h4 className="text-sm font-semibold mb-1.5 text-gray-900 leading-snug">
+          {/* 신호명 */}
+          <h4 className="text-[13px] font-semibold leading-snug text-gray-900">
             {item.signal}
           </h4>
         </>
       ) : (
         <div className="flex items-start gap-3">
+          {/* 아이콘 */}
           <div className={`p-2 rounded-lg ${config.iconBg} shrink-0`}>
             <StatusIcon className={`h-5 w-5 ${config.text}`} />
           </div>
 
+          {/* 내용 */}
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between mb-2 gap-3">
-              <h4 className="text-[15px] font-semibold text-gray-900 leading-snug">
+              <h4 className="text-[14px] font-semibold text-gray-900">
                 {item.signal}
               </h4>
 
               <div className="text-right shrink-0">
-                <p className="text-[9px] text-gray-500 leading-none mb-1 tracking-tight">
+                <p className="text-[10px] text-gray-500 leading-none mb-1">
                   SHAP
                 </p>
-                <p className={`text-[14px] font-medium leading-none ${config.text}`}>
+                <p className={`text-[13px] font-medium ${config.text}`}>
                   {formatShapValue(item.shap_value)}
                 </p>
               </div>
             </div>
 
-            <p className="text-sm text-gray-600 leading-relaxed">
+            <p className="text-[13px] text-gray-600 leading-relaxed">
               {item.reason}
             </p>
           </div>
