@@ -24,8 +24,6 @@ function calcPastCount(points: ChartDataPoint[]) {
   return firstPredIdx === -1 ? points.length : firstPredIdx;
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000';
-
 export default function App() {
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
@@ -55,7 +53,7 @@ export default function App() {
 
     const fetchStocks = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/stocks?active_only=true&limit=500`, {
+        const res = await fetch(`/api/stocks?active_only=true&limit=500`, {
           signal: controller.signal,
         });
 

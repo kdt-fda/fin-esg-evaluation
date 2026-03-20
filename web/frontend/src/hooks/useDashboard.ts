@@ -17,8 +17,6 @@ type LongPredictionResponse = {
   data: LongTermItem[];
 };
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000';
-
 function mergeShortChartData(
   actualData: StockPricePoint[],
   predictedData: ChartDataPoint[]
@@ -105,7 +103,7 @@ export default function useDashboardData(stockCode?: string) {
       setErrorMsg(null);
 
       try {
-        const priceRes = await fetch(`${API_BASE}/api/stocks/${stockCode}/prices`, {
+        const priceRes = await fetch(`/api/stocks/${stockCode}/prices`, {
           signal: controller.signal,
         });
 
@@ -128,7 +126,7 @@ export default function useDashboardData(stockCode?: string) {
 
         try {
           const shortRes = await fetch(
-            `${API_BASE}/api/predictions/short?code=${stockCode}`,
+            `/api/predictions/short?code=${stockCode}`,
             { signal: controller.signal }
           );
 
@@ -143,7 +141,7 @@ export default function useDashboardData(stockCode?: string) {
 
         try {
           const longRes = await fetch(
-            `${API_BASE}/api/predictions/long?code=${stockCode}`,
+            `/api/predictions/long?code=${stockCode}`,
             { signal: controller.signal }
           );
 

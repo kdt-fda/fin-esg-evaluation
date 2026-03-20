@@ -3,7 +3,6 @@ import type { InterpretationResponse, InterpretationSignal } from '../types/inte
 
 type InterpretationType = 'short' | 'long';
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000';
 
 export default function useInterpretation(
   stockCode: string,
@@ -35,7 +34,7 @@ export default function useInterpretation(
             : '/api/predictions/long/interpretation';
 
         const res = await fetch(
-          `${API_BASE}${endpoint}?code=${encodeURIComponent(stockCode)}`,
+          `${endpoint}?code=${encodeURIComponent(stockCode)}`,
           { signal: controller.signal }
         );
 

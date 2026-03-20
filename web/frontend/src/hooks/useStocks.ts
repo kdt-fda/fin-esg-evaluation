@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Stock } from '../components/StockSidebar';
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000';
-
 export default function useStocks(
   selectedStockCode?: string,
   onInitialSelect?: (stock: Stock) => void
@@ -19,7 +17,7 @@ export default function useStocks(
       setErrorMsg(null);
 
       try {
-        const res = await fetch(`${API_BASE}/api/stocks?active_only=true&limit=500`, {
+        const res = await fetch(`/api/stocks?active_only=true&limit=500`, {
           signal: controller.signal,
         });
 

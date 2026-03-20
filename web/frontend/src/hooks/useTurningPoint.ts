@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { TurningPoint, TurningPointsResponse } from '../types/turningpoint';
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8000';
-
 export default function useTurningPoints(stockCode: string) {
   const [turningPoints, setTurningPoints] = useState<TurningPoint[]>([]);
   const [loading, setLoading] = useState(false);
@@ -23,7 +21,7 @@ export default function useTurningPoints(stockCode: string) {
 
       try {
         const res = await fetch(
-          `${API_BASE}/api/stocks/${encodeURIComponent(stockCode)}/turning-points`,
+          `/api/stocks/${encodeURIComponent(stockCode)}/turning-points`,
           { signal: controller.signal }
         );
 
