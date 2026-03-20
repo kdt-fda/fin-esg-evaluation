@@ -1,8 +1,5 @@
 import { useEffect, useState } from 'react';
-import type {
-  InterpretationResponse,
-  InterpretationSignal,
-} from '../types/interpretation';
+import type { InterpretationResponse, InterpretationSignal } from '../types/interpretation';
 
 type InterpretationType = 'short' | 'long';
 
@@ -14,7 +11,6 @@ export default function useInterpretation(
 ) {
   const [summary, setSummary] = useState('');
   const [signals, setSignals] = useState<InterpretationSignal[]>([]);
-  const [featureContexts, setFeatureContexts] = useState<Record<string, number | string | null>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,7 +18,6 @@ export default function useInterpretation(
     if (!stockCode || stockCode === '-') {
       setSummary('');
       setSignals([]);
-      setFeatureContexts({});
       setError(null);
       return;
     }
@@ -53,7 +48,6 @@ export default function useInterpretation(
 
         setSummary(interpretation?.ai_summary ?? '');
         setSignals(interpretation?.main_signals ?? []);
-        setFeatureContexts(json.feature_contexts ?? {});
       } catch (err: any) {
         if (err?.name === 'AbortError') return;
         console.error(err);
@@ -63,7 +57,6 @@ export default function useInterpretation(
         );
         setSummary('');
         setSignals([]);
-        setFeatureContexts({});
       } finally {
         setLoading(false);
       }
@@ -76,7 +69,6 @@ export default function useInterpretation(
   return {
     summary,
     signals,
-    featureContexts,
     loading,
     error,
   };

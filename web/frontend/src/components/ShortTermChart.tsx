@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import {Area,AreaChart,CartesianGrid,Tooltip,ResponsiveContainer,XAxis,YAxis,} from 'recharts';
+import { Area, AreaChart, CartesianGrid, Tooltip, ResponsiveContainer, XAxis, YAxis, ReferenceLine } from 'recharts';
 import { Info } from 'lucide-react';
 import ChartInfoModal from './charts/ChartInfoModal';
 import ShortChartTooltip from './charts/ChartTooltip';
@@ -17,6 +17,11 @@ function formatTickLabel(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function formatPriceTick(value: number): string {
+  if (!Number.isFinite(value)) return '';
+  return value.toLocaleString('ko-KR');
 }
 
 function getYear(value: string): number | null {
@@ -66,14 +71,41 @@ export default function ShortTermPredictionChart({
     return Math.max(0, Math.min(100, Number(confidence.toFixed(1))));
   }, [confidence]);
 
+  const todayReferenceDate = useMemo(() => {
+    if (!visibleData.length) return null;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const datedPoints = visibleData
+      .map((item) => {
+        const parsed = new Date(item.date);
+        return {
+          date: item.date,
+          time: Number.isNaN(parsed.getTime()) ? null : parsed.getTime(),
+        };
+      })
+      .filter((item): item is { date: string; time: number } => item.time !== null);
+
+    if (!datedPoints.length) return null;
+
+    const lastPastOrToday = [...datedPoints]
+      .filter((item) => item.time <= today.getTime())
+      .sort((a, b) => a.time - b.time)
+      .at(-1);
+
+    if (lastPastOrToday) return lastPastOrToday.date;
+
+    return datedPoints[0].date;
+  }, [visibleData]);
+
   const axisMeta = useMemo(() => {
     const ticks = new Set<string>();
     const yearMarkers = new Set<string>();
 
     visibleData.forEach((item, index) => {
       const currentYear = getYear(item.date);
-      const previousYear =
-        index > 0 ? getYear(visibleData[index - 1].date) : null;
+      const previousYear = index > 0 ? getYear(visibleData[index - 1].date) : null;
 
       if (index % (tickInterval + 1) === 0) {
         ticks.add(item.date);
@@ -98,34 +130,19 @@ export default function ShortTermPredictionChart({
   const CustomXAxisTick = ({ x, y, payload }: any) => {
     const value: string = payload?.value ?? '';
     const label = formatTickLabel(value);
-
-    const isYearMarker =
-      spansMultipleYears && axisMeta.yearMarkers.has(value);
-
+    const isYearMarker = spansMultipleYears && axisMeta.yearMarkers.has(value);
     const yearText = getYear(value);
 
     return (
       <g>
         {!isYearMarker && (
-          <text
-            x={x}
-            y={y + 12}
-            textAnchor="middle"
-            fill="#6b7280"
-            fontSize={11}
-          >
+          <text x={x} y={y + 12} textAnchor="middle" fill="#6b7280" fontSize={11}>
             {label}
           </text>
         )}
 
         {isYearMarker && yearText && (
-          <text
-            x={x}
-            y={y + 26}
-            textAnchor="middle"
-            fill="#9ca3af"
-            fontSize={10}
-          >
+          <text x={x} y={y + 26} textAnchor="middle" fill="#9ca3af" fontSize={10}>
             {yearText}
           </text>
         )}
@@ -168,8 +185,8 @@ export default function ShortTermPredictionChart({
       </div>
 
       <div className="relative">
-        <ResponsiveContainer width="100%" height={spansMultipleYears ? 330 : 300}>
-          <AreaChart data={visibleData}>
+        <ResponsiveContainer width="100%" height={spansMultipleYears ? 380 : 350}>
+          <AreaChart data={visibleData} margin={{ top: 40, right: 8, left: 8, bottom: 0 }}>
             <defs>
               <linearGradient id="colorActual" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1} />
@@ -195,12 +212,25 @@ export default function ShortTermPredictionChart({
             <YAxis
               tick={{ fill: '#6b7280', fontSize: 12 }}
               tickLine={{ stroke: '#e5e7eb' }}
-              tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`}
+              tickFormatter={formatPriceTick}
             />
 
-            <Tooltip
-              content={<ShortChartTooltip formatTickLabel={formatTickLabel} />}
-            />
+            {todayReferenceDate && (
+              <ReferenceLine
+                x={todayReferenceDate}
+                stroke="#9ca3af"
+                strokeDasharray="5 5"
+                ifOverflow="extendDomain"
+                label={{
+                  value: '오늘',
+                  position: 'top',
+                  fill: '#6b7280',
+                  fontSize: 10,
+                }}
+              />
+            )}
+
+            <Tooltip content={<ShortChartTooltip formatTickLabel={formatTickLabel} />} />
 
             <Area
               type="monotone"

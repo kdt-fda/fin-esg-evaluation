@@ -23,7 +23,6 @@ export default function LongTermAnalysis({
   const {
     summary,
     signals,
-    featureContexts,
     loading,
     error: errorMsg,
   } = useInterpretation(stockCode, 'long');
@@ -87,7 +86,6 @@ export default function LongTermAnalysis({
               key={`${signal.feature}-${index}`}
               item={signal}
               isCompact={isSidebarOpen}
-              featureValue={featureContexts?.[signal.feature_key ?? signal.feature] ?? null}
             />
           ))}
       </div>

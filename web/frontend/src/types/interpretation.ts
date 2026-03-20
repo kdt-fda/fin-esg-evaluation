@@ -20,5 +20,4 @@ export interface InterpretationResponse {
   ticker: string;
   pred_date: string | null;
   interpretation: InterpretationPayload | null;
-  feature_contexts?: Record<string, number | string | null>;
 }

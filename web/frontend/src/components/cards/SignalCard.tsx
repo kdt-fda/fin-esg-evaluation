@@ -1,21 +1,12 @@
-import {
-  TrendingUp,
-  TrendingDown,
-  Activity,
-} from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity } from 'lucide-react';
 import { Card } from '../ui/card';
-import type {
-  InterpretationSignal,
-  SignalDirection,
-  SignalStrength,
-} from '../../types/interpretation';
+import type { InterpretationSignal, SignalDirection, SignalStrength } from '../../types/interpretation';
 
 export type SignalCardItem = InterpretationSignal;
 
 interface SignalCardProps {
   item: SignalCardItem;
   isCompact?: boolean;
-  featureValue?: number | string | null;
 }
 
 const getStatusConfig = (
@@ -79,24 +70,9 @@ const getStatusConfig = (
 export default function SignalCard({
   item,
   isCompact = false,
-  featureValue,
 }: SignalCardProps) {
   const config = getStatusConfig(item.direction, item.strength);
   const StatusIcon = config.icon;
-
-  const formatFeatureValue = (value: number | string | null | undefined) => {
-    if (value === null || value === undefined) return '-';
-
-    if (typeof value === 'number') {
-      if (Number.isInteger(value)) return value.toLocaleString();
-
-      return value.toLocaleString(undefined, {
-        maximumFractionDigits: 2,
-      });
-    }
-
-    return String(value);
-  };
 
   const formatShapValue = (value: number | null | undefined) => {
     if (value === null || value === undefined) return '-';
@@ -149,17 +125,6 @@ export default function SignalCard({
             <p className="text-sm text-gray-600 leading-relaxed">
               {item.reason}
             </p>
-
-            {featureValue !== undefined && featureValue !== null && (
-              <div className="mt-2 pt-2 border-t border-gray-100">
-                <p className="text-xs text-gray-500">
-                  {item.feature}:{' '}
-                  <span className="font-medium text-gray-700">
-                    {formatFeatureValue(featureValue)}
-                  </span>
-                </p>
-              </div>
-            )}
           </div>
         </div>
       )}

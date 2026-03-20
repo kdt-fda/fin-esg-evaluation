@@ -3,7 +3,6 @@ import json
 import pandas as pd
 
 from db.database import get_connection
-from services.feature_context import build_feature_contexts
 
 router = APIRouter(prefix="/predictions", tags=["predictions"])
 
@@ -271,7 +270,6 @@ def predict_short(
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            # 가장 최근 종가 조회
             latest_price_sql = """
                 SELECT
                     trade_date,
@@ -293,7 +291,6 @@ def predict_short(
 
             latest_close = _safe_float(latest_price_row["close"])
 
-            # 최신 단기 예측 배치 1건 조회
             sql = """
                 SELECT
                     p.pred_date       AS pred_date,
@@ -356,7 +353,6 @@ def predict_short(
 # DB에 데이터가 없으면 빈 구조 반환
 # interpretation 자체가 short 전용 JSON이라고 가정
 # + feature_key / shap_value 를 signal 별로 보강
-# + 기존 feature_contexts 생성 로직 유지
 # -----------------------------
 @router.get("/short/interpretation")
 def get_short_interpretation(
@@ -382,10 +378,8 @@ def get_short_interpretation(
                     "ticker": code,
                     "pred_date": None,
                     "interpretation": None,
-                    "feature_contexts": {},
                 }
 
-            # 최신 단기 예측 row 에서 shap_feature / shap_value 조회
             shap_sql = """
                 SELECT
                     p.shap_feature AS shap_feature,
@@ -408,16 +402,10 @@ def get_short_interpretation(
             interpretation = _safe_json(llm_row["interpretation"])
             interpretation = _augment_interpretation(interpretation, shap_map)
 
-            # 기존 역할 유지:
-            # interpretation.main_signals 를 읽어
-            # 해당 feature 의 최신 실제 값을 조회해 반환
-            feature_contexts = build_feature_contexts(cur, code, interpretation)
-
             return {
                 "ticker": code,
                 "pred_date": _to_ymd(llm_row["pred_date"]),
                 "interpretation": interpretation,
-                "feature_contexts": feature_contexts,
             }
     finally:
         conn.close()
@@ -436,7 +424,6 @@ def predict_long(
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            # 선택 종목의 sector_code 조회
             stock_sql = """
                 SELECT
                     k.ticker,
@@ -464,7 +451,6 @@ def predict_long(
                     "data": [],
                 }
 
-            # 선택 종목의 최신 pred_date를 기준으로 같은 시점의 섹터 랭킹만 조회
             latest_pred_sql = """
                 SELECT MAX(pred_date) AS latest_pred_date
                 FROM LONG_PRED_TB
@@ -480,7 +466,6 @@ def predict_long(
                     "data": [],
                 }
 
-            # 같은 섹터 전체 종목 + 동일 시점 score 조회
             ranking_sql = """
                 SELECT
                     k.ticker AS code,
@@ -513,7 +498,6 @@ def predict_long(
                     "score": _safe_float(r["score"]),
                 })
 
-            # 선택 종목의 최신 conf_score 조회
             confidence_sql = """
                 SELECT
                     p.conf_score AS conf_score
@@ -544,7 +528,6 @@ def predict_long(
 # DB에 데이터가 없으면 빈 구조 반환
 # interpretation 자체가 long 전용 JSON이라고 가정
 # + feature_key / shap_value 를 signal 별로 보강
-# + 기존 feature_contexts 생성 로직 유지
 # -----------------------------
 @router.get("/long/interpretation")
 def get_long_interpretation(
@@ -570,10 +553,8 @@ def get_long_interpretation(
                     "ticker": code,
                     "pred_date": None,
                     "interpretation": None,
-                    "feature_contexts": {},
                 }
 
-            # 최신 장기 예측 row 에서 shap_feature / shap_value 조회
             shap_sql = """
                 SELECT
                     p.shap_feature AS shap_feature,
@@ -596,15 +577,10 @@ def get_long_interpretation(
             interpretation = _safe_json(llm_row["interpretation"])
             interpretation = _augment_interpretation(interpretation, shap_map)
 
-            # interpretation.main_signals 를 읽어
-            # 해당 feature 의 최신 실제 값을 조회해 반환
-            feature_contexts = build_feature_contexts(cur, code, interpretation)
-
             return {
                 "ticker": code,
                 "pred_date": _to_ymd(llm_row["pred_date"]),
                 "interpretation": interpretation,
-                "feature_contexts": feature_contexts,
             }
     finally:
         conn.close()
