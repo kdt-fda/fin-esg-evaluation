@@ -1,3 +1,143 @@
+@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css");
+
+:root {
+  --font-family-base: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+
+  --text-primary: #111827;
+  --text-secondary: #374151;
+  --text-muted: #6b7280;
+
+  --line-height-base: 1.5;
+  --line-height-tight: 1.35;
+  --letter-spacing-base: -0.01em;
+  --letter-spacing-tight: -0.02em;
+}
+
+html {
+  font-family: var(--font-family-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family-base);
+  font-size: 15px;
+  font-weight: 400;
+  line-height: var(--line-height-base);
+  letter-spacing: var(--letter-spacing-base);
+  color: var(--text-secondary);
+}
+
+/* 제목 */
+h1, h2, h3, h4, h5, h6 {
+  margin: 0;
+  color: var(--text-primary);
+  line-height: var(--line-height-tight);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+h1 {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+h2 {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+h3 {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+h4 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* 일반 텍스트 */
+p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+small {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+span, div, label, button, input, textarea, select {
+  font-family: var(--font-family-base);
+}
+
+/* 숫자/지표 */
+.metric-value {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.metric-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.metric-subtext {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+/* 카드 제목 */
+.card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+/* 보조 설명 */
+.caption,
+.helper-text,
+.tooltip-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* 버튼 */
+button {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* 테이블 */
+th {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4b5563;
+}
+
+td {
+  font-size: 14px;
+  font-weight: 400;
+  color: #1f2937;
+}
+
+/* 강조 */
+strong, b {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
 /* Range input thumb styling */
 input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -11,9 +151,11 @@ input[type='range']::-webkit-slider-thumb {
   box-shadow: 0 0 0 1px #3b82f6;
   transition: transform 0.15s ease;
 }
+
 input[type='range']::-webkit-slider-thumb:hover {
   transform: scale(1.2);
 }
+
 input[type='range']::-moz-range-thumb {
   width: 14px;
   height: 14px;
