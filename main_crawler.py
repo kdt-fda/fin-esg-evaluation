@@ -64,7 +64,7 @@ def run_total_update_process():
         durations['Step 1'] = datetime.now() - step1_start
 
         if not is_bday:
-            logging.info("오늘은 휴장일입니다.")
+            logging.info("💤 오늘은 휴장일입니다.")
 
         logging.info("⏳ Step 1 완료. 서버 부하 방지를 위해 5초간 대기합니다...")
         time.sleep(5)

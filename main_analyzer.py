@@ -4,6 +4,7 @@ import time
 import schedule
 import logging
 from datetime import datetime
+from pykrx import stock
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -35,8 +36,28 @@ logging.basicConfig(
     force=True
 )
 
+def is_business_day():
+    """오늘이 개장일인지 확인"""
+    try:
+        today_str = datetime.now().strftime("%Y%m%d")
+        
+        df = stock.get_market_ohlcv(today_str, today_str, "005930")
+        if df is None or df.empty:
+            return False
+        return True
+        
+    except Exception as e:
+        logging.warning(f'개장일 확인 중 에러 발생 (서버 응답 불안정): {e}')
+        logging.info("영업일로 간주하고 계속 진행")
+        return True
+
 def run_total_analysis_process():
     """전체 AI 예측/분석 프로세스 통합 컨트롤러"""
+
+    if not is_business_day():
+        logging.info("💤 오늘은 휴장일입니다. 모델 예측을 건너뜁니다.")
+        return
+    
     total_start_time = datetime.now()
     durations = {}
 

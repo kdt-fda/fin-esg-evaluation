@@ -18,7 +18,7 @@ def run_step3_pipeline(is_bday=True):
             logging.info("Step 3 파생 지표 계산 및 적재 완료")
         
         else:
-            logging.info("오늘은 휴장일입니다. 파생 지표 업데이트를 생략합니다.")
+            logging.info("💤 오늘은 휴장일입니다. 파생 지표 업데이트를 생략합니다.")
 
     except Exception as e:
         logging.error(f"Step 3 수행 중 오류 발생: {str(e)}", exc_info=True)

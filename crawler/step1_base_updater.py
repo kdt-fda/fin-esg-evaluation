@@ -25,7 +25,7 @@ def run_step1_pipeline():
     
     is_bday = is_business_day()
     if not is_bday:
-        logging.info("오늘은 휴장일입니다. 기본 데이터 업데이트를 생략합니다.")
+        logging.info("💤 오늘은 휴장일입니다. 기본 데이터 업데이트를 생략합니다.")
         return False
 
     try:

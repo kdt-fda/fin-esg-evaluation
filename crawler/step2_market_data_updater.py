@@ -32,7 +32,7 @@ def run_step2_pipeline(is_bday=True):
                 logging.info("3. 펀더멘털 지표 공시 시즌이 아닙니다.")
 
         else:
-            logging.info("오늘은 휴장일입니다. 시장 데이터 업데이트를 생략합니다.")
+            logging.info("💤 오늘은 휴장일입니다. 시장 데이터 업데이트를 생략합니다.")
         
         logging.info("4. 뉴스 데이터 파이프라인 수행 중...")
         run_news_processor()
