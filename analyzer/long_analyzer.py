@@ -200,13 +200,18 @@ def run_long_term_pipeline():
             "pred_score": pred_scores, 
             "excess_ret": df_m.loc[test_mask, "excess_ret"].values
         })
+
+        df_step_eval = df_step_eval.dropna(subset=['excess_ret'])
+        if len(df_step_eval) == 0:
+            continue
+
         oof_list.append(df_step_eval)
         
         metrics = evaluate_rank_metrics(df_step_eval)
         all_metrics.append(metrics)
         print(f" 구간: {str(test_start_date)[:10]} | Rank IC: {metrics['rank_ic']:.3f} | 방향성 적중률: {metrics['dir_acc']:.1f}%")
 
-    print("[4/5] 전체 재학습 및 Z-Score 캘리브레이션...")
+    print("[4/6] 전체 재학습 및 Z-Score 캘리브레이션...")
     X_train_final = imputer.fit_transform(X_raw.loc[mask_valid_target]) 
     y_train_final = df_m.loc[mask_valid_target, "relevance"].values
     qid_final = pd.factorize(df_m.loc[mask_valid_target, "trade_date"])[0]
@@ -228,13 +233,14 @@ def run_long_term_pipeline():
             calibrator = LinearRegression().fit(df_oof_calib[["score_z"]], df_oof_calib["excess_ret"])
         else:
             oof_list = []
-    else:
+    
+    if not oof_list:
         ticker_rel = pd.Series(dtype=float)
         raw_train_scores = final_ranker.predict(X_train_final)
         train_scores_z = (raw_train_scores - raw_train_scores.mean()) / (raw_train_scores.std() + 1e-8)
-        calibrator = LinearRegression().fit(train_scores_z.reshape(-1, 1), df_m["excess_ret"].fillna(0).values)
-    
-    print(f"[5/5] {latest_date.date()} 기준 실전 추론 및 SHAP 요인 분석...")
+        calibrator = LinearRegression().fit(train_scores_z.reshape(-1, 1), df_m.loc[mask_valid_target, "excess_ret"].values)
+
+    print(f"[5/6] {latest_date.date()} 기준 실전 추론 및 SHAP 요인 분석...")
     snapshot_mask = df_m["trade_date"] == latest_date
     df_inf = df_m.loc[snapshot_mask].copy()
     X_inf_snap = X_raw.loc[snapshot_mask].copy()
