@@ -34,6 +34,15 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isModelInfoExpanded, setIsModelInfoExpanded] = useState(false);
 
+  // 사이드바 상태를 App으로 올림
+  const [selectedSector, setSelectedSector] = useState('ALL');
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    const saved = localStorage.getItem('favoriteStocks');
+    return saved ? JSON.parse(saved) : [];
+  });
+
   const {
     shortTermData,
     longTermData,
@@ -47,6 +56,10 @@ export default function App() {
     () => calcPastCount(shortTermData),
     [shortTermData]
   );
+
+  useEffect(() => {
+    localStorage.setItem('favoriteStocks', JSON.stringify(favorites));
+  }, [favorites]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -110,8 +123,17 @@ export default function App() {
         {isSidebarOpen &&
           (selectedStock ? (
             <StockSidebar
+              stocks={stocks}
               selectedStock={selectedStock}
               onSelectStock={setSelectedStock}
+              selectedSector={selectedSector}
+              onSelectSector={setSelectedSector}
+              showFavoritesOnly={showFavoritesOnly}
+              onChangeShowFavoritesOnly={setShowFavoritesOnly}
+              searchTerm={searchTerm}
+              onChangeSearchTerm={setSearchTerm}
+              favorites={favorites}
+              onChangeFavorites={setFavorites}
             />
           ) : (
             <div className="w-80 bg-white border-r border-gray-200 h-screen flex flex-col">
@@ -202,6 +224,7 @@ export default function App() {
               />
             </div>
           </div>
+
           <div className="mb-6 flex items-center justify-center gap-2 text-xs text-gray-500">
             <AlertCircle className="h-4 w-4 text-gray-400" />
             <span>
