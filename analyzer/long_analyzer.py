@@ -95,6 +95,8 @@ def evaluate_rank_metrics(df_eval: pd.DataFrame, top_k: int = 20, min_stocks: in
 # =========================================================================
 def run_long_term_pipeline():
     H_VAL = 189
+    STEP = 63
+
     print(f"🚀 중장기 예측 모델 파이프라인 가동...")
 
     joiner = StockDataJoiner()
@@ -157,7 +159,7 @@ def run_long_term_pipeline():
     df_m.loc[mask_valid_target, "relevance"] = df_m[mask_valid_target].groupby("trade_date")["excess_ret"].transform(
         lambda x: pd.qcut(x, 5, labels=False, duplicates="drop")
     )
-    
+
     df_m = df_m.replace([np.inf, -np.inf], np.nan)
 
     ignore_cols = {"close", "raw_ret", "market_median", "excess_ret", "relevance", "trade_date", "ticker", "stock_name"}
