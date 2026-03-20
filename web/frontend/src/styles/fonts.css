@@ -94,6 +94,21 @@ span, div, label, button, input, textarea, select {
   font-weight: 400;
   color: var(--text-muted);
 }
+.shap-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.shap-value {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
 
 /* 카드 제목 */
 .card-title {

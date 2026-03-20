@@ -93,14 +93,16 @@ export default function SignalCard({
             </div>
 
             <div className="text-right">
-              <p className="text-[10px] text-gray-500 leading-none mb-1">SHAP</p>
-              <p className={`text-xs font-semibold ${config.text}`}>
+              <p className="text-[9px] text-gray-500 leading-none mb-1 tracking-tight">
+                SHAP
+              </p>
+              <p className={`text-[14px] font-medium leading-none ${config.text}`}>
                 {formatShapValue(item.shap_value)}
               </p>
             </div>
           </div>
 
-          <h4 className="text-sm font-semibold mb-2 text-gray-900">
+          <h4 className="text-sm font-semibold mb-1.5 text-gray-900 leading-snug">
             {item.signal}
           </h4>
         </>
@@ -112,11 +114,15 @@ export default function SignalCard({
 
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between mb-2 gap-3">
-              <h4 className="font-semibold text-gray-900">{item.signal}</h4>
+              <h4 className="text-[15px] font-semibold text-gray-900 leading-snug">
+                {item.signal}
+              </h4>
 
               <div className="text-right shrink-0">
-                <p className="text-[10px] text-gray-500 leading-none mb-1">SHAP</p>
-                <p className={`text-xs font-semibold ${config.text}`}>
+                <p className="text-[9px] text-gray-500 leading-none mb-1 tracking-tight">
+                  SHAP
+                </p>
+                <p className={`text-[14px] font-medium leading-none ${config.text}`}>
                   {formatShapValue(item.shap_value)}
                 </p>
               </div>
