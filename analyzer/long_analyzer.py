@@ -52,21 +52,11 @@ def _connect():
 def zfill6(x):
     return pd.Series(x).astype(str).str.replace(r"\.0$", "", regex=True).str.replace("-", "", regex=False).str.strip().str.zfill(6).values[0]
 
-def get_trade_calendar(dates: pd.Series) -> np.ndarray:
-    cal = pd.to_datetime(dates, errors="coerce").dropna().unique()
-    return np.sort(cal.astype("datetime64[ns]"))
-
-def get_embargo_limit(unique_trading_days: np.ndarray, valid_start_idx: int, horizon_h: int) -> pd.Timestamp:
-    embargo_pos = valid_start_idx - horizon_h - 1
-    if embargo_pos < 0:
-        raise ValueError("[오류] 엠바고를 적용할 만큼 충분한 학습 이력이 없습니다.")
-    return pd.to_datetime(unique_trading_days[embargo_pos])
-
 def safe_mean(values, default=0.0):
     return float(np.mean(values)) if len(values) > 0 else default
 
 # =========================================================================
-# 2. 평가 및 신뢰도 함수
+# 2. 성능 평가 함수
 # =========================================================================
 def evaluate_rank_metrics(df_eval: pd.DataFrame, top_k: int = 20, min_stocks: int = 40):
     daily_ic, long_short_spreads, topk_hit_rates, daily_accuracies = [], [], [], []
@@ -99,28 +89,6 @@ def evaluate_rank_metrics(df_eval: pd.DataFrame, top_k: int = 20, min_stocks: in
         "rank_ic": safe_mean(daily_ic, default=np.nan),
         "ls_spread": safe_mean(long_short_spreads) * 100,
     }
-
-def build_confidence_scores(df_eval: pd.DataFrame, min_obs: int = 20):
-    confidence_records = []
-    for ticker, group in df_eval.groupby("ticker"):
-        if len(group) < min_obs: continue
-
-        mean_rank_error = group["rank_error"].mean()
-        rank_acc_score = (1.0 - mean_rank_error) * 100
-
-        ic = 0
-        if group["pred_score"].nunique() > 1 and group["excess_ret"].nunique() > 1:
-            ic, _ = stats.spearmanr(group["pred_score"], group["excess_ret"])
-            ic = 0 if np.isnan(ic) else ic
-
-        ts_ic_score = max(0, ic * 100)
-        raw_conf_score = (rank_acc_score * 0.6) + (ts_ic_score * 0.4)
-
-        shrink = min(1.0, len(group) / 60.0)
-        conf_score = shrink * raw_conf_score + (1.0 - shrink) * 50.0
-
-        confidence_records.append({"ticker": ticker, "conf_score": conf_score})
-    return pd.DataFrame(confidence_records).set_index("ticker")
 
 # =========================================================================
 # 3. 메인 파이프라인
@@ -176,135 +144,138 @@ def run_long_term_pipeline():
     df_m = pd.concat(all_dfs, ignore_index=True)
     df_m = df_m.sort_values(["trade_date", "ticker"]).reset_index(drop=True)
 
-    print("[2/6] 추가 지표 및 엠바고 타겟 계산 중...")
+    print("[2/6] Target 생성 중...")
     
-    # 모멘텀, 외인지배력 별도 계산
-    df_m["mom_1m"] = df_m.groupby("ticker")["close"].pct_change(20)
-    df_m["mom_1_6"] = df_m.groupby("ticker")["close"].shift(20) / df_m.groupby("ticker")["close"].shift(120) - 1
-    df_m["mom_7_12"] = df_m.groupby("ticker")["close"].shift(120) / df_m.groupby("ticker")["close"].shift(250) - 1
-    
-    df_m["rank_mom_7_12"] = df_m.groupby("trade_date")["mom_7_12"].rank(pct=True)
-    df_m["rank_mom_1_6"] = df_m.groupby("trade_date")["mom_1_6"].rank(pct=True)
-
-    if "foreign_net_amt" in df_m.columns and "volume" in df_m.columns:
-        df_m["foreign_dominance"] = df_m["foreign_net_amt"] / ((df_m["volume"] * df_m["close"]) + 1)
-    else:
-        df_m["foreign_dominance"] = np.nan
-
     # 타겟 생성
     df_m["raw_ret"] = df_m.groupby("ticker")["close"].shift(-H_VAL) / df_m["close"] - 1.0
     df_m["market_median"] = df_m.groupby("trade_date")["raw_ret"].transform("median")
     df_m["excess_ret"] = df_m["raw_ret"] - df_m["market_median"]
 
     mask_valid_target = df_m["excess_ret"].notna()
+
+    df_m["relevance"] = np.nan 
     df_m.loc[mask_valid_target, "relevance"] = df_m[mask_valid_target].groupby("trade_date")["excess_ret"].transform(
         lambda x: pd.qcut(x, 5, labels=False, duplicates="drop")
     )
-    df_m["relevance"] = df_m["relevance"].fillna(0).astype(int)
-
+    
     df_m = df_m.replace([np.inf, -np.inf], np.nan)
 
     ignore_cols = {"close", "raw_ret", "market_median", "excess_ret", "relevance", "trade_date", "ticker", "stock_name"}
     feats = [c for c in df_m.columns if c not in ignore_cols and pd.api.types.is_numeric_dtype(df_m[c])]
     X_raw = df_m[feats]
 
-    print("[3/6] 엠바고 스플릿 및 XGBRanker 학습 중...")
-    unique_trading_days = get_trade_calendar(df_m["trade_date"])
-    valid_idx = int(len(unique_trading_days) * 0.8)
-    
-    valid_start_date = pd.to_datetime(unique_trading_days[valid_idx])
-    embargo_limit = get_embargo_limit(unique_trading_days, valid_idx, H_VAL)
-    
-    valid_dates = unique_trading_days[valid_idx:]
-    split_idx = int(len(valid_dates) * 0.5)
-    valid_eval_end_date = pd.to_datetime(valid_dates[split_idx - 1])
-
-    train_mask = df_m["trade_date"] <= embargo_limit
-    valid_eval_mask = (df_m["trade_date"] >= valid_start_date) & (df_m["trade_date"] <= valid_eval_end_date)
-    valid_calib_mask = df_m["trade_date"] > valid_eval_end_date
+    print("[3/6] 워킹 포워드(Walk-Forward) 검증 중...")
+    unique_dates = np.sort(df_m["trade_date"].unique())
+    start_idx = int(len(unique_dates) * 0.7)
 
     imputer = SimpleImputer(strategy="median", add_indicator=True)
-    X_train = imputer.fit_transform(X_raw.loc[train_mask])
-    y_train_rel = df_m.loc[train_mask, "relevance"].values
-    qid_train = pd.factorize(pd.to_datetime(df_m.loc[train_mask, "trade_date"]))[0]
-
-    X_valid_eval = imputer.transform(X_raw.loc[valid_eval_mask])
-    y_valid_eval_rel = df_m.loc[valid_eval_mask, "relevance"].values
-    qid_valid_eval = pd.factorize(pd.to_datetime(df_m.loc[valid_eval_mask, "trade_date"]))[0]
-
-    ranker = XGBRanker(n_estimators=300, learning_rate=0.03, max_depth=4, objective="rank:pairwise", subsample=0.8, colsample_bytree=0.8, random_state=42, n_jobs=-1, tree_method='hist')
-    ranker.fit(X_train, y_train_rel, qid=qid_train, eval_set=[(X_valid_eval, y_valid_eval_rel)], eval_qid=[qid_valid_eval], verbose=False)
-
-    print("[4/6] 성능 평가 및 기대수익률 캘리브레이션...")
-    df_eval = df_m.loc[valid_eval_mask, ["trade_date", "ticker", "excess_ret"]].copy()
-    df_eval["pred_score"] = ranker.predict(X_valid_eval)
-    metrics = evaluate_rank_metrics(df_eval, top_k=20, min_stocks=40)
+    all_metrics, oof_list = [], []
     
-    df_eval["pred_pct"] = df_eval.groupby("trade_date")["pred_score"].rank(pct=True)
-    df_eval["actual_pct"] = df_eval.groupby("trade_date")["excess_ret"].rank(pct=True)
-    df_eval["rank_error"] = (df_eval["pred_pct"] - df_eval["actual_pct"]).abs()
-    df_stock_conf = build_confidence_scores(df_eval, min_obs=20)
+    for i in range(start_idx, len(unique_dates), STEP):
+        train_end_idx = i - H_VAL 
+        if train_end_idx <= 0: continue
+        
+        train_mask = df_m["trade_date"] <= unique_dates[train_end_idx]
+        test_start_date = unique_dates[i]
+        test_end_idx = min(i + STEP - 1, len(unique_dates) - 1)
+        test_mask = (df_m["trade_date"] >= test_start_date) & (df_m["trade_date"] <= unique_dates[test_end_idx])
+        
+        if train_mask.sum() == 0 or test_mask.sum() == 0: continue
+        
+        X_tr = imputer.fit_transform(X_raw.loc[train_mask])
+        y_tr = df_m.loc[train_mask, "relevance"].values
+        qid_tr = pd.factorize(df_m.loc[train_mask, "trade_date"])[0]
+        
+        ranker = XGBRanker(n_estimators=150, learning_rate=0.05, max_depth=3, objective="rank:pairwise", n_jobs=-1, random_state=42)
+        ranker.fit(X_tr, y_tr, qid=qid_tr)
+        
+        X_te = imputer.transform(X_raw.loc[test_mask])
+        pred_scores = ranker.predict(X_te)
+        
+        df_step_eval = pd.DataFrame({
+            "trade_date": df_m.loc[test_mask, "trade_date"].values, 
+            "ticker": df_m.loc[test_mask, "ticker"].values,
+            "pred_score": pred_scores, 
+            "excess_ret": df_m.loc[test_mask, "excess_ret"].values
+        })
+        oof_list.append(df_step_eval)
+        
+        metrics = evaluate_rank_metrics(df_step_eval)
+        all_metrics.append(metrics)
+        print(f" 구간: {str(test_start_date)[:10]} | Rank IC: {metrics['rank_ic']:.3f} | 방향성 적중률: {metrics['dir_acc']:.1f}%")
 
-    X_valid_calib = imputer.transform(X_raw.loc[valid_calib_mask])
-    excess_ret_calib = df_m.loc[valid_calib_mask, "excess_ret"].values
-    pred_scores_calib = ranker.predict(X_valid_calib)
+    print("[4/5] 전체 재학습 및 Z-Score 캘리브레이션...")
+    X_train_final = imputer.fit_transform(X_raw.loc[mask_valid_target]) 
+    y_train_final = df_m.loc[mask_valid_target, "relevance"].values
+    qid_final = pd.factorize(df_m.loc[mask_valid_target, "trade_date"])[0]
     
-    mask_calib = ~np.isnan(excess_ret_calib)
-    X_calib_final = pred_scores_calib[mask_calib].reshape(-1, 1)
-    y_calib_final = excess_ret_calib[mask_calib]
-
-    # 캘리브레이터 초기화
-    calibrator = LinearRegression()
-    is_fitted = False
-
-    # 1단계: 최근 데이터로 시도
-    if len(y_calib_final) > 50:
-        calibrator.fit(X_calib_final, y_calib_final)
-        is_fitted = True
+    final_ranker = XGBRanker(n_estimators=150, learning_rate=0.05, max_depth=3, objective="rank:pairwise", n_jobs=-1, random_state=42)
+    final_ranker.fit(X_train_final, y_train_final, qid=qid_final)
     
-    # 2단계: 실패 시 과거 데이터로 시도
-    if not is_fitted:
-        df_eval_clean = df_eval.dropna(subset=["pred_score", "excess_ret"])
-        if len(df_eval_clean) > 0:
-            calibrator.fit(
-                df_eval_clean["pred_score"].values.reshape(-1, 1), 
-                df_eval_clean["excess_ret"].values
-            )
-            is_fitted = True
-
-    # 3단계: 둘 다 데이터가 없을 시 임시 기준
-    if not is_fitted:
-        dummy_X = np.array([[0.0], [1.0]])
-        dummy_y = np.array([0.0, 0.1]) 
-        calibrator.fit(dummy_X, dummy_y)
-
-    print(f"[5/6] {latest_date.date()} 기준 실전 추론 및 SHAP 요인 분석...")
+    if oof_list:
+        df_oof = pd.concat(oof_list)
+        df_oof['pred_pct'] = df_oof.groupby('trade_date')['pred_score'].rank(pct=True)
+        df_oof['actual_pct'] = df_oof.groupby('trade_date')['excess_ret'].rank(pct=True)
+        df_oof['rank_error'] = (df_oof['pred_pct'] - df_oof['actual_pct']).abs()
+        ticker_rel = (1 - df_oof.groupby('ticker')['rank_error'].mean()) * 100
+        
+        df_oof['score_z'] = df_oof.groupby('trade_date')['pred_score'].transform(lambda x: (x - x.mean()) / (x.std() + 1e-8))
+        df_oof_calib = df_oof.dropna(subset=['score_z', 'excess_ret'])
+        
+        if len(df_oof_calib) > 10:
+            calibrator = LinearRegression().fit(df_oof_calib[["score_z"]], df_oof_calib["excess_ret"])
+        else:
+            oof_list = []
+    else:
+        ticker_rel = pd.Series(dtype=float)
+        raw_train_scores = final_ranker.predict(X_train_final)
+        train_scores_z = (raw_train_scores - raw_train_scores.mean()) / (raw_train_scores.std() + 1e-8)
+        calibrator = LinearRegression().fit(train_scores_z.reshape(-1, 1), df_m["excess_ret"].fillna(0).values)
+    
+    print(f"[5/5] {latest_date.date()} 기준 실전 추론 및 SHAP 요인 분석...")
     snapshot_mask = df_m["trade_date"] == latest_date
     df_inf = df_m.loc[snapshot_mask].copy()
-    X_inf_imputed = imputer.transform(X_raw.loc[snapshot_mask])
+    X_inf_snap = X_raw.loc[snapshot_mask].copy()
     
-    raw_scores = ranker.predict(X_inf_imputed)
-    predicted_alpha = calibrator.predict(raw_scores.reshape(-1, 1)) * 100
-    df_inf["Expected_Return(%)"] = predicted_alpha
-
-    df_inf = df_inf.merge(df_stock_conf, on="ticker", how="left")
-    df_inf["Confidence_Score"] = df_inf["conf_score"].fillna(50.0)
+    X_inf_final = imputer.transform(X_inf_snap)
+    raw_scores = final_ranker.predict(X_inf_final)
+    
+    raw_scores_z = (raw_scores - raw_scores.mean()) / (raw_scores.std() + 1e-8)
+    exp_ret = calibrator.predict(raw_scores_z.reshape(-1, 1)) * 100
+    
+    df_inf["Expected_Return(%)"] = exp_ret
+    
+    score_dev = np.abs(raw_scores - np.median(raw_scores))
+    sig_strength = pd.Series(score_dev).rank(pct=True).values * 100
+    
+    df_inf = df_inf.merge(ticker_rel.rename('hist_rel'), on='ticker', how='left')
+    default_rel = df_inf['hist_rel'].median() if not df_inf['hist_rel'].isna().all() else 50.0
+    df_inf['hist_rel'] = df_inf['hist_rel'].fillna(default_rel)
+    
+    df_inf["Confidence_Score"] = (sig_strength * 0.4) + (df_inf['hist_rel'] * 0.6)
     df_inf["Return_Score"] = df_inf["Expected_Return(%)"].rank(pct=True) * 100
-    df_inf["Attractiveness_Score"] = (df_inf["Return_Score"] * 0.5) + (df_inf["Confidence_Score"] * 0.5)
-    df_inf = df_inf.replace([np.inf, -np.inf], np.nan)
+    df_inf["Attractiveness_Score"] = (df_inf["Return_Score"] * 0.5 + df_inf["Confidence_Score"] * 0.5)
 
-    explainer = shap.TreeExplainer(ranker)
-    updated_feat_cols = imputer.get_feature_names_out(feats)
-    shap_values = explainer.shap_values(pd.DataFrame(X_inf_imputed, columns=updated_feat_cols))
-
+    explainer = shap.TreeExplainer(final_ranker)
+    shap_values = explainer.shap_values(X_inf_final)
+    feature_names = imputer.get_feature_names_out(feats)
+    
     db_insert_data = []
     
+    avg_dir_acc = np.mean([m['dir_acc'] for m in all_metrics]) if all_metrics else 50.0
+    avg_hit_rate = np.mean([m['hit_rate'] for m in all_metrics]) if all_metrics else 50.0
+    avg_rank_ic = np.mean([m['rank_ic'] for m in all_metrics]) if all_metrics else 0.0
+    avg_ls_spread = np.mean([m['ls_spread'] for m in all_metrics]) if all_metrics else 0.0
+
+    def clean_val(v):
+        return float(v) if pd.notnull(v) and not np.isinf(v) else None
+
     for i, (_, row) in enumerate(df_inf.iterrows()):
         ticker = row['ticker']
         sv = shap_values[i]
         
         agg_shap = {}
-        for j, fname in enumerate(updated_feat_cols):
+        for j, fname in enumerate(feature_names):
             base_fname = fname.replace("missingindicator_", "")
             if base_fname not in global_exclude_bases:
                 agg_shap[base_fname] = agg_shap.get(base_fname, 0) + sv[j]
@@ -312,25 +283,20 @@ def run_long_term_pipeline():
         # 긍정 Top 3 / 부정 Top 3
         pos_feats = sorted([(k, v) for k, v in agg_shap.items() if v > 0], key=lambda x: x[1], reverse=True)[:3]
         neg_feats = sorted([(k, v) for k, v in agg_shap.items() if v < 0], key=lambda x: x[1])[:3]
-        
         combined_feats = pos_feats + neg_feats
+        
         top_feat_names = [item[0] for item in combined_feats]
         top_feat_vals = [round(float(item[1]), 4) for item in combined_feats]
 
-        exp_ret = round(float(row['Expected_Return(%)']), 4) if not np.isnan(row['Expected_Return(%)']) else None
-        score = round(float(row['Attractiveness_Score']), 4) if not np.isnan(row['Attractiveness_Score']) else None
-        conf_val = round(float(row['Confidence_Score']), 4) if not np.isnan(row['Confidence_Score']) else None
-
-        def clean_val(v):
-            return float(v) if pd.notnull(v) and not np.isinf(v) else None
-
         db_insert_data.append((
-            latest_date.date(), ticker, exp_ret, score, 
+            latest_date.date(), ticker, 
+            clean_val(row['Expected_Return(%)']), clean_val(row['Attractiveness_Score']), 
             json.dumps(top_feat_names), json.dumps(top_feat_vals),
-            clean_val(metrics['dir_acc']), clean_val(metrics['hit_rate']),
-            clean_val(metrics['rank_ic']), clean_val(metrics['ls_spread']), conf_val
+            clean_val(avg_dir_acc), clean_val(avg_hit_rate),
+            clean_val(avg_rank_ic), clean_val(avg_ls_spread), 
+            clean_val(row['Confidence_Score'])
         ))
-
+    
     print(f"[6/6] LONG_PRED_TB 적재 중... (총 {len(db_insert_data)}건)")
     conn = _connect()
     try:
