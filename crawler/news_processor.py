@@ -262,43 +262,60 @@ def upload_news_score_to_db(df_in):
 
     # 1. 실제 거래일 리스트
     start_str = "20230101"
-    end_str = dt.date.today().strftime("%Y%m%d")
-    # 코스피 지수 데이터를 통해 실제 장이 열렸던 날짜들만 추출
-    market_days = stock.get_market_ohlcv(start_str, end_str, "005930").index
-    market_days = pd.to_datetime(market_days)
+    future_str = (dt.date.today() + dt.timedelta(days=10)).strftime("%Y%m%d")
 
-    # 2. 날짜 조정 함수: 입력일보다 크거나 같은 첫 번째 거래일을 반환
+    market_days = stock.get_previous_business_days(fromdate=start_str, todate=future_str)
+    market_days_series = pd.Series(market_days)
+
+    # 2. 날짜 조정 함수
     def get_next_trading_day(target_date):
         target_date = pd.to_datetime(target_date)
-        # target_date보다 크거나 같은 날짜 중 가장 빠른 날
-        future_days = market_days[market_days >= target_date]
+
+        # 수집된 뉴스 날짜보다 크거나 같은 실제 영업일만 달력에서 필터링
+        future_days = market_days_series[market_days_series >= target_date]
         if not future_days.empty:
-            return future_days[0]
-        return target_date # 미래 거래일이 없으면(오늘 이후) 일단 그대로 반환
+            return future_days.iloc[0]
+        return target_date # 미래 거래일이 없으면 일단 그대로 반환
     
-    # 2. 뉴스 날짜를 다음 '실제 거래일'로 변환
+    # 3. 뉴스 날짜를 다음 '실제 거래일'로 변환
     df_in['date'] = pd.to_datetime(df_in['date'])
     df_in['trade_date'] = df_in['date'].apply(get_next_trading_day)
+
+    # 4. 종목별/날짜별 집계 (평균 점수와 기사 수 동시 계산)
+    final = df_in.groupby(["company", "종목코드", "trade_date"]).agg(
+        점수=('score', 'mean'),
+        기사수=('score', 'count')
+    ).reset_index()
+
+    final.rename(columns={'company': '기업명', 'trade_date': '날짜'}, inplace=True)
     
-    final = df_in.groupby(["company", "종목코드", "trade_date"])["score"].mean().reset_index()
-    final.columns = ["기업명", "종목코드", "날짜", "점수"]
-    
+    # 5. DB 적재 (가중 평균 누적)
     conn = _connect()
     try:
         cur = conn.cursor()
         data_list = []
         for _, row in final.iterrows():
-            data_list.append((row['날짜'], row['종목코드'], row['기업명'], float(row['점수'])))
+            data_list.append((
+                row['날짜'], 
+                row['종목코드'], 
+                row['기업명'], 
+                float(row['점수']), 
+                int(row['기사수'])
+            ))
 
         sql = """
-            INSERT INTO NEWS_TB (trade_date, ticker, stock_name, score)
-            VALUES (%s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE score = VALUES(score);
+            INSERT INTO NEWS_TB (trade_date, ticker, stock_name, score, article_count)
+            VALUES (%s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE 
+                score = ((score * article_count) + (VALUES(score) * VALUES(article_count))) / (article_count + VALUES(article_count)),
+                article_count = article_count + VALUES(article_count);
         """
+        
         if data_list:
             cur.executemany(sql, data_list)
             conn.commit()
-            log(f"✅ DB 적재 완료: {len(data_list)}건의 데이터 (공휴일/연휴 데이터 다음 거래일 합산)")
+            log(f"✅ DB 적재 완료: {len(data_list)}건")
+            
     except Exception as e:
         conn.rollback()
         log(f"❌ DB 적재 에러: {e}")
