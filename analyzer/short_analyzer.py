@@ -63,6 +63,10 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
         kospi_df = pd.read_sql("SELECT ticker, stock_name FROM KOSPI200_STOCKS_TB", conn)
     finally:
         conn.close()
+
+    kospi_df['ticker'] = kospi_df['ticker'].apply(lambda x: zfill6([x]))
+    unique_tickers = kospi_df['ticker'].unique()
+    ticker_encoder = {t: i for i, t in enumerate(unique_tickers)}
     
     stock_names = kospi_df['stock_name'].dropna().unique()
     
@@ -107,6 +111,8 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
         # Lag 피처 생성
         X_lag = pd.concat([X_base_raw.shift(lag).add_suffix(f"_lag{lag}") for lag in range(win)], axis=1)
         
+        X_lag['ticker_id'] = ticker_encoder.get(ticker, 0)
+
         inf_X_list.append(X_lag.iloc[[-1]])
         inf_ticker_list.append(ticker)
         
@@ -234,8 +240,8 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
             agg_shap[base_f] = agg_shap.get(base_f, 0) + sv[j]
             
         # 긍정 Top 3 / 부정 Top 3
-        pos_feats = sorted([(k, v) for k, v in agg_shap.items() if v > 0], key=lambda x: x[1], reverse=True)[:3]
-        neg_feats = sorted([(k, v) for k, v in agg_shap.items() if v < 0], key=lambda x: x[1])[:3]
+        pos_feats = sorted([(k, v) for k, v in agg_shap.items() if v > 0 and k != 'ticker_id'], key=lambda x: x[1], reverse=True)[:3]
+        neg_feats = sorted([(k, v) for k, v in agg_shap.items() if v < 0 and k != 'ticker_id'], key=lambda x: x[1])[:3]
         
         combined_feats = pos_feats + neg_feats
         top_feat_names = [item[0] for item in combined_feats]
