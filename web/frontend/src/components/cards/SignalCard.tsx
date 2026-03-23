@@ -15,6 +15,8 @@ interface SignalCardProps {
   isCompact?: boolean;
 }
 
+type TooltipAlign = 'center' | 'left' | 'right';
+
 const getStatusConfig = (
   direction: SignalDirection,
   strength: SignalStrength
@@ -72,8 +74,6 @@ const getStatusConfig = (
 
   return styles[strength][direction];
 };
-
-type TooltipAlign = 'center' | 'left' | 'right';
 
 export default function SignalCard({
   item,
@@ -146,7 +146,6 @@ export default function SignalCard({
           isCompact ? `h-[160px] ${config.bg}` : 'bg-white'
         } ${config.border}`}
       >
-        {/* tooltip */}
         <div
           className={`
             pointer-events-none absolute top-full z-50 mt-3
@@ -157,12 +156,10 @@ export default function SignalCard({
             ${tooltipPositionClass}
           `}
         >
-          {/* arrow */}
           <div
             className={`h-0 w-0 border-l-[6px] border-r-[6px] border-b-[6px] border-l-transparent border-r-transparent border-b-white ${arrowPositionClass}`}
           />
 
-          {/* body */}
           <div className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[11px] leading-relaxed text-gray-700 shadow-xl whitespace-normal text-center">
             {tooltipText}
           </div>
@@ -170,28 +167,23 @@ export default function SignalCard({
 
         {isCompact ? (
           <>
-            {/* 상단 (아이콘 + SHAP) */}
             <div className="mb-2 flex items-start justify-between">
               <div className={`rounded p-1 ${config.iconBg}`}>
                 <StatusIcon className={`h-3 w-3 ${config.text}`} />
               </div>
 
               <div className="text-right">
-                {/* SHAP 라벨 */}
-                <p className="mb-0.5 text-[7px] leading-none tracking-tight text-gray-400">
+                <span className="mb-0.5 block text-[7px] leading-none tracking-tight text-gray-400">
                   SHAP
-                </p>
-
-                {/* SHAP 값 (오타 수정됨) */}
-                <p
-                  className={`text-[9px] font-semibold leading-none tracking-tight ${config.text}`}
+                </span>
+                <span
+                  className={`block text-[9px] font-semibold leading-none tracking-tight ${config.text}`}
                 >
                   {formatShapValue(item.shap_value)}
-                </p>
+                </span>
               </div>
             </div>
 
-            {/* signal */}
             <h4 className="line-clamp-2 min-h-[36px] text-[12px] font-semibold leading-snug text-gray-900">
               {item.signal}
             </h4>
@@ -209,12 +201,12 @@ export default function SignalCard({
                 </h4>
 
                 <div className="shrink-0 text-right">
-                  <p className="mb-1 text-[10px] leading-none text-gray-500">
+                  <span className="mb-1 block text-[10px] leading-none text-gray-500">
                     SHAP
-                  </p>
-                  <p className={`text-[13px] font-medium ${config.text}`}>
+                  </span>
+                  <span className={`block text-[13px] font-medium ${config.text}`}>
                     {formatShapValue(item.shap_value)}
-                  </p>
+                  </span>
                 </div>
               </div>
 

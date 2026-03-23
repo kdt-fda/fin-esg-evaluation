@@ -53,16 +53,12 @@ h3 {
 }
 
 h4 {
-  font-size: 16px;
   font-weight: 600;
 }
 
 /* 일반 텍스트 */
 p {
   margin: 0;
-  font-size: 15px;
-  line-height: 1.6;
-  color: var(--text-secondary);
 }
 
 small {
@@ -94,20 +90,21 @@ span, div, label, button, input, textarea, select {
   font-weight: 400;
   color: var(--text-muted);
 }
+
 .shap-label {
-  font-size: 12px;
+  font-size: 8px;
   font-weight: 500;
   color: var(--text-muted);
   letter-spacing: -0.01em;
-  line-height: 1.2;
+  line-height: 1;
 }
 
 .shap-value {
-  font-size: 15px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--text-primary);
   letter-spacing: -0.02em;
-  line-height: 1.2;
+  line-height: 1;
 }
 
 /* 카드 제목 */
