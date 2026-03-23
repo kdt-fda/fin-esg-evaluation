@@ -7,11 +7,6 @@ from db.database import get_connection
 router = APIRouter(prefix="/predictions", tags=["predictions"])
 
 
-# -----------------------------
-# feature 라벨 매핑
-# interpretation.main_signals[].feature 가 한글 라벨로 저장된 경우
-# raw feature key 를 다시 찾기 위해 사용
-# -----------------------------
 FEATURE_LABEL_MAP = {
     "trade_date": "거래일자",
     "ticker": "종목코드",
@@ -134,20 +129,10 @@ FEATURE_LABEL_MAP = {
 FEATURE_REVERSE_MAP = {label: key for key, label in FEATURE_LABEL_MAP.items()}
 
 
-# -----------------------------
-# 공통 헬퍼
-# -----------------------------
 def _to_ymd(value) -> str:
     if value is None:
         return ""
     return pd.to_datetime(value).strftime("%Y-%m-%d")
-
-
-def _to_month_label(value) -> str:
-    if value is None:
-        return ""
-    d = pd.to_datetime(value)
-    return f"{int(d.month)}월"
 
 
 def _safe_float(value):
@@ -170,12 +155,6 @@ def _safe_json(value):
 
 
 def _extract_return_list(value):
-    """
-    SHORT_PRED_TB.prediction JSON 문자열에서
-    D+1 ~ D+20 예측 수익률(%) 리스트를 추출
-    예:
-    '[-0.99, -1.14, ...]' -> [-0.99, -1.14, ...]
-    """
     parsed = _safe_json(value)
 
     if parsed is None:
@@ -193,10 +172,6 @@ def _extract_return_list(value):
 
 
 def _build_shap_map(shap_features, shap_values) -> dict[str, float | None]:
-    """
-    shap_feature / shap_value JSON을 읽어서
-    { raw_feature_key: shap_value } 형태 dict 생성
-    """
     parsed_features = _safe_json(shap_features)
     parsed_values = _safe_json(shap_values)
 
@@ -214,19 +189,6 @@ def _build_shap_map(shap_features, shap_values) -> dict[str, float | None]:
 
 
 def _augment_interpretation(interpretation, shap_map=None):
-    """
-    interpretation.main_signals 구조는 유지하면서:
-    1) feature(한글 라벨) -> feature_key(raw key) 추가
-    2) shap_map 에서 대응 shap_value 추가
-
-    예:
-    {
-        "feature": "고변동성 임계치",
-        "feature_key": "vol_threshold",
-        "shap_value": 0.1234,
-        ...
-    }
-    """
     if not isinstance(interpretation, dict):
         return interpretation
 
@@ -244,455 +206,267 @@ def _augment_interpretation(interpretation, shap_map=None):
             continue
 
         signal_copy = dict(signal)
-
         feature_label = signal_copy.get("feature")
         feature_key = FEATURE_REVERSE_MAP.get(feature_label, feature_label)
 
         signal_copy["feature_key"] = feature_key
         signal_copy["shap_value"] = shap_map.get(feature_key)
-
         augmented_signals.append(signal_copy)
 
     copied["main_signals"] = augmented_signals
     return copied
 
 
-# -----------------------------
-# SHORT TERM
-# 실제 종가(STOCK_TB.close)는 /stocks/{code}/prices 에서 별도 조회
-# 여기서는 단기 예측(SHORT_PRED_TB) + confidence 반환
-# confidence는 DB의 conf_score 사용
-# -----------------------------
-@router.get("/short")
-def predict_short(
-    code: str = Query(..., description="ticker 예: 005930"),
-):
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            latest_price_sql = """
-                SELECT
-                    trade_date,
-                    close
-                FROM STOCK_TB
-                WHERE ticker = %s
-                ORDER BY trade_date DESC
-                LIMIT 1
-            """
-            cur.execute(latest_price_sql, [code])
-            latest_price_row = cur.fetchone()
+def _get_latest_close(cur, code: str):
+    sql = """
+        SELECT trade_date, close
+        FROM STOCK_TB
+        WHERE ticker = %s
+        ORDER BY trade_date DESC
+        LIMIT 1
+    """
+    cur.execute(sql, [code])
+    row = cur.fetchone()
 
-            if not latest_price_row or latest_price_row.get("close") is None:
-                return {
-                    "confidence": 0,
-                    "pastCount": 0,
-                    "data": [],
-                }
+    if not row or row.get("close") is None:
+        return None
 
-            latest_close = _safe_float(latest_price_row["close"])
-
-            sql = """
-                SELECT
-                    p.pred_date       AS pred_date,
-                    p.prediction      AS predicted_value,
-                    p.conf_score      AS conf_score
-                FROM SHORT_PRED_TB p
-                WHERE p.ticker = %s
-                ORDER BY p.pred_date DESC
-                LIMIT 1
-            """
-
-            cur.execute(sql, [code])
-            row = cur.fetchone()
-
-            if not row:
-                return {
-                    "confidence": 0,
-                    "pastCount": 0,
-                    "data": [],
-                }
-
-            return_list = _extract_return_list(row["predicted_value"])
-
-            if not return_list:
-                return {
-                    "confidence": _safe_float(row.get("conf_score")) or 0,
-                    "pastCount": 0,
-                    "data": [],
-                }
-
-            base_date = pd.to_datetime(row["pred_date"])
-            data = []
-
-            for i, predicted_return in enumerate(return_list, start=1):
-                predicted_price = latest_close * (1 + (predicted_return / 100.0))
-                target_date = base_date + pd.offsets.BDay(i)
-
-                point = {
-                    "date": target_date.strftime("%Y-%m-%d"),
-                    "predicted": round(predicted_price, 2),
-                }
-
-                data.append(point)
-
-            confidence = _safe_float(row.get("conf_score")) or 0
-
-            return {
-                "confidence": confidence,
-                "pastCount": 0,
-                "data": data,
-            }
-
-    finally:
-        conn.close()
+    return _safe_float(row["close"])
 
 
-# -----------------------------
-# SHORT TERM INTERPRETATION
-# SHORT_LLM_TB.interpretation(JSON) 반환
-# DB에 데이터가 없으면 빈 구조 반환
-# interpretation 자체가 short 전용 JSON이라고 가정
-# + feature_key / shap_value 를 signal 별로 보강
-# -----------------------------
-@router.get("/short/interpretation")
-def get_short_interpretation(
-    code: str = Query(..., description="ticker 예: 005930"),
-):
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            llm_sql = """
-                SELECT
-                    l.pred_date      AS pred_date,
-                    l.interpretation AS interpretation
-                FROM SHORT_LLM_TB l
-                WHERE l.ticker = %s
-                ORDER BY l.pred_date DESC
-                LIMIT 1
-            """
-            cur.execute(llm_sql, [code])
-            llm_row = cur.fetchone()
+def _build_short_payload(cur, code: str):
+    latest_close = _get_latest_close(cur, code)
 
-            if not llm_row:
-                return {
-                    "ticker": code,
-                    "pred_date": None,
-                    "interpretation": None,
-                }
+    sql = """
+        SELECT
+            p.pred_date      AS pred_date,
+            p.prediction     AS predicted_value,
+            p.conf_score     AS conf_score,
+            p.shap_feature   AS shap_feature,
+            p.shap_value     AS shap_value
+        FROM SHORT_PRED_TB p
+        WHERE p.ticker = %s
+        ORDER BY p.pred_date DESC
+        LIMIT 1
+    """
+    cur.execute(sql, [code])
+    row = cur.fetchone()
 
-            shap_sql = """
-                SELECT
-                    p.shap_feature AS shap_feature,
-                    p.shap_value   AS shap_value
-                FROM SHORT_PRED_TB p
-                WHERE p.ticker = %s
-                ORDER BY p.pred_date DESC
-                LIMIT 1
-            """
-            cur.execute(shap_sql, [code])
-            shap_row = cur.fetchone()
+    if not row:
+        return {
+            "pred_date": None,
+            "confidence": 0,
+            "pastCount": 0,
+            "data": [],
+            "shap_map": {},
+        }
 
-            shap_map = {}
-            if shap_row:
-                shap_map = _build_shap_map(
-                    shap_row.get("shap_feature"),
-                    shap_row.get("shap_value"),
-                )
+    pred_date = _to_ymd(row.get("pred_date"))
+    confidence = _safe_float(row.get("conf_score")) or 0
+    shap_map = _build_shap_map(row.get("shap_feature"), row.get("shap_value"))
 
-            interpretation = _safe_json(llm_row["interpretation"])
-            interpretation = _augment_interpretation(interpretation, shap_map)
+    return_list = _extract_return_list(row.get("predicted_value"))
+    if latest_close is None or not return_list:
+        return {
+            "pred_date": pred_date,
+            "confidence": confidence,
+            "pastCount": 0,
+            "data": [],
+            "shap_map": shap_map,
+        }
 
-            return {
-                "ticker": code,
-                "pred_date": _to_ymd(llm_row["pred_date"]),
-                "interpretation": interpretation,
-            }
-    finally:
-        conn.close()
+    base_date = pd.to_datetime(row["pred_date"])
+    data = []
+
+    for i, predicted_return in enumerate(return_list, start=1):
+        predicted_price = latest_close * (1 + (predicted_return / 100.0))
+        target_date = base_date + pd.offsets.BDay(i)
+
+        data.append({
+            "date": target_date.strftime("%Y-%m-%d"),
+            "predicted": round(predicted_price, 2),
+        })
+
+    return {
+        "pred_date": pred_date,
+        "confidence": confidence,
+        "pastCount": 0,
+        "data": data,
+        "shap_map": shap_map,
+    }
 
 
-# -----------------------------
-# LONG TERM
-# 선택 종목의 섹터를 찾고,
-# 같은 섹터에 속한 모든 종목의 LONG_PRED_TB.score 반환
-# confidence는 선택 종목의 최신 conf_score 사용
-# -----------------------------
-@router.get("/long")
-def predict_long(
-    code: str = Query(..., description="ticker 예: 005930"),
-):
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            stock_sql = """
-                SELECT
-                    k.ticker,
-                    k.stock_name,
-                    k.sector_code,
-                    s.sector_name
-                FROM KOSPI200_STOCKS_TB k
-                LEFT JOIN SECTOR_TB s
-                    ON k.sector_code = s.sector_code
-                WHERE k.ticker = %s
-                LIMIT 1
-            """
-            cur.execute(stock_sql, [code])
-            selected_stock = cur.fetchone()
+def _build_short_interpretation(cur, code: str, shap_map: dict):
+    sql = """
+        SELECT
+            l.pred_date      AS pred_date,
+            l.interpretation AS interpretation
+        FROM SHORT_LLM_TB l
+        WHERE l.ticker = %s
+        ORDER BY l.pred_date DESC
+        LIMIT 1
+    """
+    cur.execute(sql, [code])
+    row = cur.fetchone()
 
-            if not selected_stock:
-                raise HTTPException(status_code=404, detail="선택한 종목을 찾을 수 없습니다.")
+    if not row:
+        return {
+            "pred_date": None,
+            "interpretation": None,
+        }
 
-            sector_code = selected_stock.get("sector_code")
-            sector_name = selected_stock.get("sector_name")
+    interpretation = _safe_json(row["interpretation"])
+    interpretation = _augment_interpretation(interpretation, shap_map)
 
-            if not sector_code:
-                return {
-                    "confidence": 0,
-                    "data": [],
-                }
-
-            latest_pred_sql = """
-                SELECT MAX(pred_date) AS latest_pred_date
-                FROM LONG_PRED_TB
-                WHERE ticker = %s
-            """
-            cur.execute(latest_pred_sql, [code])
-            latest_pred_row = cur.fetchone()
-            latest_pred_date = latest_pred_row.get("latest_pred_date") if latest_pred_row else None
-
-            if not latest_pred_date:
-                return {
-                    "confidence": 0,
-                    "data": [],
-                }
-
-            ranking_sql = """
-                SELECT
-                    k.ticker AS code,
-                    k.stock_name AS name,
-                    k.sector_code AS sector_code,
-                    s.sector_name AS sector,
-                    lp.score AS score
-                FROM KOSPI200_STOCKS_TB k
-                LEFT JOIN SECTOR_TB s
-                    ON k.sector_code = s.sector_code
-                LEFT JOIN LONG_PRED_TB lp
-                    ON k.ticker = lp.ticker
-                   AND lp.pred_date = %s
-                WHERE k.sector_code = %s
-                  AND k.is_active = TRUE
-                ORDER BY lp.score DESC, k.stock_name ASC
-            """
-            cur.execute(ranking_sql, [latest_pred_date, sector_code])
-            rows = cur.fetchall()
-
-            data = []
-            for r in rows:
-                if r.get("score") is None:
-                    continue
-
-                data.append({
-                    "code": r["code"],
-                    "name": r["name"],
-                    "sector": r["sector"] or sector_name or "",
-                    "score": _safe_float(r["score"]),
-                })
-
-            confidence_sql = """
-                SELECT
-                    p.conf_score AS conf_score
-                FROM LONG_PRED_TB p
-                WHERE p.ticker = %s
-                ORDER BY p.pred_date DESC
-                LIMIT 1
-            """
-            cur.execute(confidence_sql, [code])
-            confidence_row = cur.fetchone()
-
-            confidence = _safe_float(confidence_row.get("conf_score")) if confidence_row else 0
-            if confidence is None:
-                confidence = 0
-
-            return {
-                "confidence": confidence,
-                "data": data,
-            }
-
-    finally:
-        conn.close()
+    return {
+        "pred_date": _to_ymd(row["pred_date"]),
+        "interpretation": interpretation,
+    }
 
 
-# -----------------------------
-# LONG TERM INTERPRETATION
-# LONG_LLM_TB.interpretation(JSON) 반환
-# DB에 데이터가 없으면 빈 구조 반환
-# interpretation 자체가 long 전용 JSON이라고 가정
-# + feature_key / shap_value 를 signal 별로 보강
-# -----------------------------
-@router.get("/long/interpretation")
-def get_long_interpretation(
-    code: str = Query(..., description="ticker 예: 005930"),
-):
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            llm_sql = """
-                SELECT
-                    l.pred_date      AS pred_date,
-                    l.interpretation AS interpretation
-                FROM LONG_LLM_TB l
-                WHERE l.ticker = %s
-                ORDER BY l.pred_date DESC
-                LIMIT 1
-            """
-            cur.execute(llm_sql, [code])
-            llm_row = cur.fetchone()
+def _build_long_payload(cur, code: str):
+    stock_sql = """
+        SELECT
+            k.ticker,
+            k.stock_name,
+            k.sector_code,
+            s.sector_name
+        FROM KOSPI200_STOCKS_TB k
+        LEFT JOIN SECTOR_TB s
+            ON k.sector_code = s.sector_code
+        WHERE k.ticker = %s
+        LIMIT 1
+    """
+    cur.execute(stock_sql, [code])
+    selected_stock = cur.fetchone()
 
-            if not llm_row:
-                return {
-                    "ticker": code,
-                    "pred_date": None,
-                    "interpretation": None,
-                }
+    if not selected_stock:
+        raise HTTPException(status_code=404, detail="선택한 종목을 찾을 수 없습니다.")
 
-            shap_sql = """
-                SELECT
-                    p.shap_feature AS shap_feature,
-                    p.shap_value   AS shap_value
-                FROM LONG_PRED_TB p
-                WHERE p.ticker = %s
-                ORDER BY p.pred_date DESC
-                LIMIT 1
-            """
-            cur.execute(shap_sql, [code])
-            shap_row = cur.fetchone()
+    sector_code = selected_stock.get("sector_code")
+    sector_name = selected_stock.get("sector_name")
 
-            shap_map = {}
-            if shap_row:
-                shap_map = _build_shap_map(
-                    shap_row.get("shap_feature"),
-                    shap_row.get("shap_value"),
-                )
+    long_pred_sql = """
+        SELECT
+            p.pred_date      AS pred_date,
+            p.conf_score     AS conf_score,
+            p.shap_feature   AS shap_feature,
+            p.shap_value     AS shap_value
+        FROM LONG_PRED_TB p
+        WHERE p.ticker = %s
+        ORDER BY p.pred_date DESC
+        LIMIT 1
+    """
+    cur.execute(long_pred_sql, [code])
+    row = cur.fetchone()
 
-            interpretation = _safe_json(llm_row["interpretation"])
-            interpretation = _augment_interpretation(interpretation, shap_map)
+    if not row:
+        return {
+            "pred_date": None,
+            "confidence": 0,
+            "data": [],
+            "shap_map": {},
+            "sector_code": sector_code,
+            "sector_name": sector_name,
+        }
 
-            return {
-                "ticker": code,
-                "pred_date": _to_ymd(llm_row["pred_date"]),
-                "interpretation": interpretation,
-            }
-    finally:
-        conn.close()
+    pred_date = row.get("pred_date")
+    confidence = _safe_float(row.get("conf_score")) or 0
+    shap_map = _build_shap_map(row.get("shap_feature"), row.get("shap_value"))
+
+    ranking_data = []
+    if sector_code and pred_date:
+        ranking_sql = """
+            SELECT
+                k.ticker AS code,
+                k.stock_name AS name,
+                k.sector_code AS sector_code,
+                s.sector_name AS sector,
+                lp.score AS score
+            FROM KOSPI200_STOCKS_TB k
+            LEFT JOIN SECTOR_TB s
+                ON k.sector_code = s.sector_code
+            LEFT JOIN LONG_PRED_TB lp
+                ON k.ticker = lp.ticker
+               AND lp.pred_date = %s
+            WHERE k.sector_code = %s
+              AND k.is_active = TRUE
+            ORDER BY lp.score DESC, k.stock_name ASC
+        """
+        cur.execute(ranking_sql, [pred_date, sector_code])
+        rows = cur.fetchall()
+
+        for r in rows:
+            if r.get("score") is None:
+                continue
+
+            ranking_data.append({
+                "code": r["code"],
+                "name": r["name"],
+                "sector": r["sector"] or sector_name or "",
+                "score": _safe_float(r["score"]),
+            })
+
+    return {
+        "pred_date": _to_ymd(pred_date),
+        "confidence": confidence,
+        "data": ranking_data,
+        "shap_map": shap_map,
+        "sector_code": sector_code,
+        "sector_name": sector_name,
+    }
+
+
+def _build_long_interpretation(cur, code: str, shap_map: dict):
+    sql = """
+        SELECT
+            l.pred_date      AS pred_date,
+            l.interpretation AS interpretation
+        FROM LONG_LLM_TB l
+        WHERE l.ticker = %s
+        ORDER BY l.pred_date DESC
+        LIMIT 1
+    """
+    cur.execute(sql, [code])
+    row = cur.fetchone()
+
+    if not row:
+        return {
+            "pred_date": None,
+            "interpretation": None,
+        }
+
+    interpretation = _safe_json(row["interpretation"])
+    interpretation = _augment_interpretation(interpretation, shap_map)
+
+    return {
+        "pred_date": _to_ymd(row["pred_date"]),
+        "interpretation": interpretation,
+    }
 
 
 @router.get("/short/full")
 def get_short_full(
     code: str = Query(..., description="ticker 예: 005930"),
 ):
-    """
-    단기 예측 + 단기 해석을 한 번에 반환
-    기존:
-      - /predictions/short
-      - /predictions/short/interpretation
-    을 하나로 합친 API
-    """
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            # 1) 최신 종가
-            latest_price_sql = """
-                SELECT
-                    trade_date,
-                    close
-                FROM STOCK_TB
-                WHERE ticker = %s
-                ORDER BY trade_date DESC
-                LIMIT 1
-            """
-            cur.execute(latest_price_sql, [code])
-            latest_price_row = cur.fetchone()
-
-            latest_close = None
-            if latest_price_row and latest_price_row.get("close") is not None:
-                latest_close = _safe_float(latest_price_row["close"])
-
-            # 2) short prediction 최신값
-            short_pred_sql = """
-                SELECT
-                    p.pred_date      AS pred_date,
-                    p.prediction     AS predicted_value,
-                    p.conf_score     AS conf_score,
-                    p.shap_feature   AS shap_feature,
-                    p.shap_value     AS shap_value
-                FROM SHORT_PRED_TB p
-                WHERE p.ticker = %s
-                ORDER BY p.pred_date DESC
-                LIMIT 1
-            """
-            cur.execute(short_pred_sql, [code])
-            short_pred_row = cur.fetchone()
-
-            short_confidence = 0
-            short_data = []
-            pred_date = None
-            shap_map = {}
-
-            if short_pred_row:
-                pred_date = _to_ymd(short_pred_row.get("pred_date"))
-                short_confidence = _safe_float(short_pred_row.get("conf_score")) or 0
-
-                shap_map = _build_shap_map(
-                    short_pred_row.get("shap_feature"),
-                    short_pred_row.get("shap_value"),
-                )
-
-                return_list = _extract_return_list(short_pred_row.get("predicted_value"))
-
-                if latest_close is not None and return_list:
-                    base_date = pd.to_datetime(short_pred_row["pred_date"])
-
-                    for i, predicted_return in enumerate(return_list, start=1):
-                        predicted_price = latest_close * (1 + (predicted_return / 100.0))
-                        target_date = base_date + pd.offsets.BDay(i)
-
-                        short_data.append({
-                            "date": target_date.strftime("%Y-%m-%d"),
-                            "predicted": round(predicted_price, 2),
-                        })
-
-            # 3) short interpretation 최신값
-            short_llm_sql = """
-                SELECT
-                    l.pred_date      AS pred_date,
-                    l.interpretation AS interpretation
-                FROM SHORT_LLM_TB l
-                WHERE l.ticker = %s
-                ORDER BY l.pred_date DESC
-                LIMIT 1
-            """
-            cur.execute(short_llm_sql, [code])
-            short_llm_row = cur.fetchone()
-
-            interpretation = None
-            interpretation_pred_date = None
-
-            if short_llm_row:
-                interpretation_pred_date = _to_ymd(short_llm_row.get("pred_date"))
-                interpretation = _safe_json(short_llm_row.get("interpretation"))
-                interpretation = _augment_interpretation(interpretation, shap_map)
+            short_payload = _build_short_payload(cur, code)
+            interpretation_payload = _build_short_interpretation(
+                cur, code, short_payload["shap_map"]
+            )
 
             return {
                 "ticker": code,
-                "pred_date": pred_date or interpretation_pred_date,
+                "pred_date": short_payload["pred_date"] or interpretation_payload["pred_date"],
                 "short": {
-                    "confidence": short_confidence,
-                    "pastCount": 0,
-                    "data": short_data,
+                    "confidence": short_payload["confidence"],
+                    "pastCount": short_payload["pastCount"],
+                    "data": short_payload["data"],
                 },
-                "interpretation": interpretation,
+                "interpretation": interpretation_payload["interpretation"],
             }
-
     finally:
         conn.close()
 
@@ -701,137 +475,22 @@ def get_short_full(
 def get_long_full(
     code: str = Query(..., description="ticker 예: 005930"),
 ):
-    """
-    장기 예측 + 장기 해석을 한 번에 반환
-    기존:
-      - /predictions/long
-      - /predictions/long/interpretation
-    을 하나로 합친 API
-    """
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            # 1) 선택 종목 / 섹터 정보
-            stock_sql = """
-                SELECT
-                    k.ticker,
-                    k.stock_name,
-                    k.sector_code,
-                    s.sector_name
-                FROM KOSPI200_STOCKS_TB k
-                LEFT JOIN SECTOR_TB s
-                    ON k.sector_code = s.sector_code
-                WHERE k.ticker = %s
-                LIMIT 1
-            """
-            cur.execute(stock_sql, [code])
-            selected_stock = cur.fetchone()
-
-            if not selected_stock:
-                raise HTTPException(status_code=404, detail="선택한 종목을 찾을 수 없습니다.")
-
-            sector_code = selected_stock.get("sector_code")
-            sector_name = selected_stock.get("sector_name")
-
-            # 2) 선택 종목의 최신 long prediction row
-            long_pred_sql = """
-                SELECT
-                    p.pred_date      AS pred_date,
-                    p.conf_score     AS conf_score,
-                    p.shap_feature   AS shap_feature,
-                    p.shap_value     AS shap_value
-                FROM LONG_PRED_TB p
-                WHERE p.ticker = %s
-                ORDER BY p.pred_date DESC
-                LIMIT 1
-            """
-            cur.execute(long_pred_sql, [code])
-            long_pred_row = cur.fetchone()
-
-            if not long_pred_row:
-                return {
-                    "ticker": code,
-                    "pred_date": None,
-                    "long": {
-                        "confidence": 0,
-                        "data": [],
-                    },
-                    "interpretation": None,
-                }
-
-            latest_pred_date = long_pred_row.get("pred_date")
-            confidence = _safe_float(long_pred_row.get("conf_score")) or 0
-
-            shap_map = _build_shap_map(
-                long_pred_row.get("shap_feature"),
-                long_pred_row.get("shap_value"),
+            long_payload = _build_long_payload(cur, code)
+            interpretation_payload = _build_long_interpretation(
+                cur, code, long_payload["shap_map"]
             )
-
-            # 3) 같은 섹터 종목 랭킹
-            ranking_data = []
-
-            if sector_code and latest_pred_date:
-                ranking_sql = """
-                    SELECT
-                        k.ticker AS code,
-                        k.stock_name AS name,
-                        k.sector_code AS sector_code,
-                        s.sector_name AS sector,
-                        lp.score AS score
-                    FROM KOSPI200_STOCKS_TB k
-                    LEFT JOIN SECTOR_TB s
-                        ON k.sector_code = s.sector_code
-                    LEFT JOIN LONG_PRED_TB lp
-                        ON k.ticker = lp.ticker
-                       AND lp.pred_date = %s
-                    WHERE k.sector_code = %s
-                      AND k.is_active = TRUE
-                    ORDER BY lp.score DESC, k.stock_name ASC
-                """
-                cur.execute(ranking_sql, [latest_pred_date, sector_code])
-                rows = cur.fetchall()
-
-                for r in rows:
-                    if r.get("score") is None:
-                        continue
-
-                    ranking_data.append({
-                        "code": r["code"],
-                        "name": r["name"],
-                        "sector": r["sector"] or sector_name or "",
-                        "score": _safe_float(r["score"]),
-                    })
-
-            # 4) long interpretation
-            long_llm_sql = """
-                SELECT
-                    l.pred_date      AS pred_date,
-                    l.interpretation AS interpretation
-                FROM LONG_LLM_TB l
-                WHERE l.ticker = %s
-                ORDER BY l.pred_date DESC
-                LIMIT 1
-            """
-            cur.execute(long_llm_sql, [code])
-            long_llm_row = cur.fetchone()
-
-            interpretation = None
-            interpretation_pred_date = None
-
-            if long_llm_row:
-                interpretation_pred_date = _to_ymd(long_llm_row.get("pred_date"))
-                interpretation = _safe_json(long_llm_row.get("interpretation"))
-                interpretation = _augment_interpretation(interpretation, shap_map)
 
             return {
                 "ticker": code,
-                "pred_date": _to_ymd(latest_pred_date) or interpretation_pred_date,
+                "pred_date": long_payload["pred_date"] or interpretation_payload["pred_date"],
                 "long": {
-                    "confidence": confidence,
-                    "data": ranking_data,
+                    "confidence": long_payload["confidence"],
+                    "data": long_payload["data"],
                 },
-                "interpretation": interpretation,
+                "interpretation": interpretation_payload["interpretation"],
             }
-
     finally:
         conn.close()
