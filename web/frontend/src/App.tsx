@@ -233,14 +233,14 @@ export default function App() {
             </div>
           </div>
 
-          <div className="mb-6 flex items-center justify-center gap-2 text-xs text-gray-500">
-            <AlertCircle className="h-4 w-4 text-gray-400" />
-            <span>
-              {isSidebarOpen
-                ? '사이드바를 닫으면 각 기술적 지표의 설명을 더 자세히 확인할 수 있습니다.'
-                : }
-            </span>
-          </div>
+          {isSidebarOpen && (
+            <div className="mb-6 flex items-center justify-center gap-2 text-xs text-gray-500">
+              <AlertCircle className="h-4 w-4 text-gray-400" />
+              <span>
+                사이드바를 닫으면 각 기술적 지표의 설명을 더 자세히 확인할 수 있습니다.
+              </span>
+            </div>
+          )}
 
           <div className="bg-white rounded-xl shadow-sm p-6">
             <button
