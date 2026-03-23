@@ -172,14 +172,16 @@ export default function SignalCard({
           <>
             <div className="mb-2 flex items-start justify-between">
               <div className={`rounded p-1 ${config.iconBg}`}>
-                <StatusIcon className={`h-3.5 w-3.5 ${config.text}`} />
+                <StatusIcon className={`h-3 w-3 ${config.text}`} />
               </div>
 
               <div className="text-right">
-                <p className="mb-1 text-[8px] leading-none tracking-tight text-gray-400">
+                <p className="mb-0.5 text-[7px] leading-none tracking-tight text-gray-400">
                   SHAP
                 </p>
-                <p className={`text-[11px] font-medium leading-none ${config.text}`}>
+                <p
+                  className={`text-[9px] font-semibold leading-none tracking-tight ${config.text}`}
+                >
                   {formatShapValue(item.shap_value)}
                 </p>
               </div>
