@@ -96,8 +96,6 @@ export default function SignalCard({
     if (!wrapperRef.current) return;
 
     const rect = wrapperRef.current.getBoundingClientRect();
-
-    // SignalCard를 감싸는 grid 컨테이너 기준으로 경계 계산
     const boundaryEl = wrapperRef.current.parentElement;
     const boundaryRect = boundaryEl?.getBoundingClientRect();
 
@@ -144,8 +142,8 @@ export default function SignalCard({
       className="relative group"
     >
       <Card
-        className={`p-3 border transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl ${
-          isCompact ? config.bg : 'bg-white'
+        className={`border p-3 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl ${
+          isCompact ? `h-[160px] ${config.bg}` : 'bg-white'
         } ${config.border}`}
       >
         {/* tooltip */}
@@ -173,21 +171,21 @@ export default function SignalCard({
         {isCompact ? (
           <>
             <div className="mb-2 flex items-start justify-between">
-              <div className={`rounded p-1.5 ${config.iconBg}`}>
-                <StatusIcon className={`h-4 w-4 ${config.text}`} />
+              <div className={`rounded p-1 ${config.iconBg}`}>
+                <StatusIcon className={`h-3.5 w-3.5 ${config.text}`} />
               </div>
 
               <div className="text-right">
-                <p className="mb-1 text-[9px] leading-none tracking-tight text-gray-500">
+                <p className="mb-1 text-[8px] leading-none tracking-tight text-gray-400">
                   SHAP
                 </p>
-                <p className={`text-[12px] font-medium leading-none ${config.text}`}>
+                <p className={`text-[11px] font-medium leading-none ${config.text}`}>
                   {formatShapValue(item.shap_value)}
                 </p>
               </div>
             </div>
 
-            <h4 className="text-[13px] font-semibold leading-snug text-gray-900">
+            <h4 className="line-clamp-2 min-h-[36px] text-[12px] font-semibold leading-snug text-gray-900">
               {item.signal}
             </h4>
           </>
