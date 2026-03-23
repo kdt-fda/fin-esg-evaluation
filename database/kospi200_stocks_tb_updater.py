@@ -139,11 +139,11 @@ def update_kospi200_stocks_table():
                         break
                     else:
                         print(f"⚠️ {eng_code} 섹터 0건 수집. 재시도... ({attempt+1}/3)")
-                        time.sleep(0.5)
+                        time.sleep(1)
                         
                 except Exception as e:
                     print(f"❌ {eng_code} 파이썬 에러 발생: {e}")
-                    time.sleep(0.5)
+                    time.sleep(1)
 
             if not tickers:
                 continue
