@@ -3,14 +3,15 @@ import SummaryCard from './cards/SummaryCard';
 import SignalCard from './cards/SignalCard';
 import PositioningCard from './cards/PositioningCard';
 import { Card } from './ui/card';
-import useInterpretation from '../hooks/useInterpretation';
 import type { LongTermItem } from '../types/chart';
+import type { InterpretationPayload, InterpretationSignal } from '../types/interpretation';
 
 interface LongTermAnalysisProps {
   stockName: string;
   stockCode: string;
   currentSector: string;
   data?: LongTermItem[];
+  interpretation?: InterpretationPayload | null;
   isSidebarOpen?: boolean;
 }
 
@@ -18,14 +19,13 @@ export default function LongTermAnalysis({
   stockCode,
   currentSector,
   data,
+  interpretation,
   isSidebarOpen = false,
 }: LongTermAnalysisProps) {
-  const {
-    summary,
-    signals,
-    loading,
-    error: errorMsg,
-  } = useInterpretation(stockCode, 'long');
+  const summary = interpretation?.ai_summary ?? '';
+  const signals: InterpretationSignal[] = interpretation?.main_signals ?? [];
+  const loading = false;
+  const errorMsg = null;
 
   const sectorPosition = useMemo(() => {
     if (!data || data.length === 0) {

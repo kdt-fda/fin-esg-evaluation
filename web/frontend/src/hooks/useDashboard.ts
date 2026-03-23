@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ChartDataPoint, LongTermItem } from '../types/chart';
+import type { InterpretationPayload } from '../types/interpretation';
 
 type StockPricePoint = {
   date: string;
@@ -15,6 +16,20 @@ type PredictionResponse = {
 type LongPredictionResponse = {
   confidence: number;
   data: LongTermItem[];
+};
+
+type ShortFullResponse = {
+  ticker: string;
+  pred_date: string | null;
+  short: PredictionResponse;
+  interpretation: InterpretationPayload | null;
+};
+
+type LongFullResponse = {
+  ticker: string;
+  pred_date: string | null;
+  long: LongPredictionResponse;
+  interpretation: InterpretationPayload | null;
 };
 
 function mergeShortChartData(
@@ -83,6 +98,8 @@ export default function useDashboardData(stockCode?: string) {
   const [longTermData, setLongTermData] = useState<LongTermItem[]>([]);
   const [shortConfidence, setShortConfidence] = useState(0);
   const [longConfidence, setLongConfidence] = useState(0);
+  const [shortInterpretation, setShortInterpretation] = useState<InterpretationPayload | null>(null);
+  const [longInterpretation, setLongInterpretation] = useState<InterpretationPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -92,6 +109,8 @@ export default function useDashboardData(stockCode?: string) {
       setLongTermData([]);
       setShortConfidence(0);
       setLongConfidence(0);
+      setShortInterpretation(null);
+      setLongInterpretation(null);
       setErrorMsg(null);
       return;
     }
@@ -103,9 +122,17 @@ export default function useDashboardData(stockCode?: string) {
       setErrorMsg(null);
 
       try {
-        const priceRes = await fetch(`/api/stocks/${stockCode}/prices`, {
-          signal: controller.signal,
-        });
+        const [priceRes, shortFullRes, longFullRes] = await Promise.all([
+          fetch(`/api/stocks/${stockCode}/prices`, {
+            signal: controller.signal,
+          }),
+          fetch(`/api/predictions/short/full?code=${stockCode}`, {
+            signal: controller.signal,
+          }),
+          fetch(`/api/predictions/long/full?code=${stockCode}`, {
+            signal: controller.signal,
+          }),
+        ]);
 
         if (!priceRes.ok) {
           throw new Error(await priceRes.text());
@@ -113,64 +140,50 @@ export default function useDashboardData(stockCode?: string) {
 
         const priceJson = (await priceRes.json()) as StockPricePoint[];
 
-        let shortJson: PredictionResponse = {
-          confidence: 0,
-          data: [],
-          pastCount: 0,
-        };
-
-        let longJson: LongPredictionResponse = {
-          confidence: 0,
-          data: [],
-        };
-
-        try {
-          const shortRes = await fetch(
-            `/api/predictions/short?code=${stockCode}`,
-            { signal: controller.signal }
-          );
-
-          if (shortRes.ok) {
-            shortJson = (await shortRes.json()) as PredictionResponse;
-          } else {
-            console.warn('short prediction not ready:', await shortRes.text());
-          }
-        } catch (err) {
-          console.warn('short prediction fetch failed:', err);
-        }
-
-        try {
-          const longRes = await fetch(
-            `/api/predictions/long?code=${stockCode}`,
-            { signal: controller.signal }
-          );
-
-          if (longRes.ok) {
-            longJson = (await longRes.json()) as LongPredictionResponse;
-          } else {
-            console.warn('long prediction not ready:', await longRes.text());
-            longJson = {
-              confidence: 0,
-              data: [],
-            };
-          }
-        } catch (err) {
-          console.warn('long prediction fetch failed:', err);
-          longJson = {
+        let shortFullJson: ShortFullResponse = {
+          ticker: stockCode,
+          pred_date: null,
+          short: {
             confidence: 0,
             data: [],
-          };
+            pastCount: 0,
+          },
+          interpretation: null,
+        };
+
+        let longFullJson: LongFullResponse = {
+          ticker: stockCode,
+          pred_date: null,
+          long: {
+            confidence: 0,
+            data: [],
+          },
+          interpretation: null,
+        };
+
+        if (shortFullRes.ok) {
+          shortFullJson = (await shortFullRes.json()) as ShortFullResponse;
+        } else {
+          console.warn('short full prediction not ready:', await shortFullRes.text());
+        }
+
+        if (longFullRes.ok) {
+          longFullJson = (await longFullRes.json()) as LongFullResponse;
+        } else {
+          console.warn('long full prediction not ready:', await longFullRes.text());
         }
 
         const mergedShortData = mergeShortChartData(
           priceJson ?? [],
-          shortJson.data ?? []
+          shortFullJson.short?.data ?? []
         );
 
         setShortTermData(mergedShortData);
-        setLongTermData(longJson.data ?? []);
-        setShortConfidence(shortJson.confidence ?? 0);
-        setLongConfidence(longJson.confidence ?? 0);
+        setLongTermData(longFullJson.long?.data ?? []);
+        setShortConfidence(shortFullJson.short?.confidence ?? 0);
+        setLongConfidence(longFullJson.long?.confidence ?? 0);
+        setShortInterpretation(shortFullJson.interpretation ?? null);
+        setLongInterpretation(longFullJson.interpretation ?? null);
       } catch (err: any) {
         if (err?.name === 'AbortError') return;
 
@@ -180,6 +193,8 @@ export default function useDashboardData(stockCode?: string) {
         setLongTermData([]);
         setShortConfidence(0);
         setLongConfidence(0);
+        setShortInterpretation(null);
+        setLongInterpretation(null);
       } finally {
         setLoading(false);
       }
@@ -194,6 +209,8 @@ export default function useDashboardData(stockCode?: string) {
     longTermData,
     shortConfidence,
     longConfidence,
+    shortInterpretation,
+    longInterpretation,
     loading,
     errorMsg,
   };

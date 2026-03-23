@@ -2,25 +2,25 @@ import { Card } from './ui/card';
 import SummaryCard from './cards/SummaryCard';
 import SignalCard from './cards/SignalCard';
 import TurningPointsCard from './cards/TurningPointCard';
-import useInterpretation from '../hooks/useInterpretation';
 import useTurningPoints from '../hooks/useTurningPoint';
+import type { InterpretationPayload, InterpretationSignal } from '../types/interpretation';
 
 interface ShortTermAnalysisProps {
   stockName: string;
   stockCode: string;
+  interpretation?: InterpretationPayload | null;
   isSidebarOpen?: boolean;
 }
 
 export default function ShortTermAnalysis({
   stockCode,
+  interpretation,
   isSidebarOpen = false,
 }: ShortTermAnalysisProps) {
-  const {
-    summary,
-    signals,
-    loading: interpretationLoading,
-    error: interpretationError,
-  } = useInterpretation(stockCode, 'short');
+  const summary = interpretation?.ai_summary ?? '';
+  const signals: InterpretationSignal[] = interpretation?.main_signals ?? [];
+  const interpretationLoading = false;
+  const interpretationError = null;
 
   const {
     turningPoints,
