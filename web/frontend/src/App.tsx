@@ -48,6 +48,10 @@ export default function App() {
     longTermData,
     shortConfidence,
     longConfidence,
+    shortSummary,
+    longSummary,
+    shortSignals,
+    longSignals,
     loading,
     errorMsg,
   } = useDashboardData(selectedStock?.code);
@@ -206,6 +210,8 @@ export default function App() {
               <ShortTermAnalysis
                 stockName={selectedStock?.name ?? '-'}
                 stockCode={selectedStock?.code ?? '-'}
+                summary={shortSummary}
+                signals={shortSignals}
                 isSidebarOpen={isSidebarOpen}
               />
             </div>
@@ -220,6 +226,8 @@ export default function App() {
                 stockCode={selectedStock?.code ?? '-'}
                 currentSector={selectedStock?.sector ?? '-'}
                 data={longTermData}
+                summary={longSummary}
+                signals={longSignals}
                 isSidebarOpen={isSidebarOpen}
               />
             </div>

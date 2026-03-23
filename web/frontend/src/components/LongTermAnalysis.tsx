@@ -4,14 +4,15 @@ import SignalCard from './cards/SignalCard';
 import PositioningCard from './cards/PositioningCard';
 import { Card } from './ui/card';
 import type { LongTermItem } from '../types/chart';
-import type { InterpretationPayload, InterpretationSignal } from '../types/interpretation';
+import type { InterpretationSignal } from '../types/interpretation';
 
 interface LongTermAnalysisProps {
   stockName: string;
   stockCode: string;
   currentSector: string;
   data?: LongTermItem[];
-  interpretation?: InterpretationPayload | null;
+  summary?: string;
+  signals?: InterpretationSignal[];
   isSidebarOpen?: boolean;
 }
 
@@ -19,11 +20,10 @@ export default function LongTermAnalysis({
   stockCode,
   currentSector,
   data,
-  interpretation,
+  summary = '',
+  signals = [],
   isSidebarOpen = false,
 }: LongTermAnalysisProps) {
-  const summary = interpretation?.ai_summary ?? '';
-  const signals: InterpretationSignal[] = interpretation?.main_signals ?? [];
   const loading = false;
   const errorMsg = null;
 
@@ -68,12 +68,6 @@ export default function LongTermAnalysis({
           isSidebarOpen ? 'grid-cols-6' : 'grid-cols-1'
         }`}
       >
-        {loading && (
-          <Card className="col-span-full border-gray-200 bg-white p-4">
-            <p className="text-sm text-gray-500">중장기 주요 신호를 불러오는 중...</p>
-          </Card>
-        )}
-
         {!loading && !errorMsg && signals.length === 0 && (
           <Card className="col-span-full border-gray-200 bg-white p-4">
             <p className="text-sm text-gray-400">아직 중장기 주요 신호 데이터가 없습니다.</p>

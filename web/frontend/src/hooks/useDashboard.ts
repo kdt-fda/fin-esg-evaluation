@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { ChartDataPoint, LongTermItem } from '../types/chart';
-import type { InterpretationPayload } from '../types/interpretation';
+import type {
+  InterpretationPayload,
+  InterpretationSignal,
+} from '../types/interpretation';
 
 type StockPricePoint = {
   date: string;
@@ -98,8 +101,12 @@ export default function useDashboardData(stockCode?: string) {
   const [longTermData, setLongTermData] = useState<LongTermItem[]>([]);
   const [shortConfidence, setShortConfidence] = useState(0);
   const [longConfidence, setLongConfidence] = useState(0);
-  const [shortInterpretation, setShortInterpretation] = useState<InterpretationPayload | null>(null);
-  const [longInterpretation, setLongInterpretation] = useState<InterpretationPayload | null>(null);
+
+  const [shortSummary, setShortSummary] = useState('');
+  const [longSummary, setLongSummary] = useState('');
+  const [shortSignals, setShortSignals] = useState<InterpretationSignal[]>([]);
+  const [longSignals, setLongSignals] = useState<InterpretationSignal[]>([]);
+
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -109,8 +116,10 @@ export default function useDashboardData(stockCode?: string) {
       setLongTermData([]);
       setShortConfidence(0);
       setLongConfidence(0);
-      setShortInterpretation(null);
-      setLongInterpretation(null);
+      setShortSummary('');
+      setLongSummary('');
+      setShortSignals([]);
+      setLongSignals([]);
       setErrorMsg(null);
       return;
     }
@@ -163,14 +172,10 @@ export default function useDashboardData(stockCode?: string) {
 
         if (shortFullRes.ok) {
           shortFullJson = (await shortFullRes.json()) as ShortFullResponse;
-        } else {
-          console.warn('short full prediction not ready:', await shortFullRes.text());
         }
 
         if (longFullRes.ok) {
           longFullJson = (await longFullRes.json()) as LongFullResponse;
-        } else {
-          console.warn('long full prediction not ready:', await longFullRes.text());
         }
 
         const mergedShortData = mergeShortChartData(
@@ -182,8 +187,11 @@ export default function useDashboardData(stockCode?: string) {
         setLongTermData(longFullJson.long?.data ?? []);
         setShortConfidence(shortFullJson.short?.confidence ?? 0);
         setLongConfidence(longFullJson.long?.confidence ?? 0);
-        setShortInterpretation(shortFullJson.interpretation ?? null);
-        setLongInterpretation(longFullJson.interpretation ?? null);
+
+        setShortSummary(shortFullJson.interpretation?.ai_summary ?? '');
+        setLongSummary(longFullJson.interpretation?.ai_summary ?? '');
+        setShortSignals(shortFullJson.interpretation?.main_signals ?? []);
+        setLongSignals(longFullJson.interpretation?.main_signals ?? []);
       } catch (err: any) {
         if (err?.name === 'AbortError') return;
 
@@ -193,8 +201,10 @@ export default function useDashboardData(stockCode?: string) {
         setLongTermData([]);
         setShortConfidence(0);
         setLongConfidence(0);
-        setShortInterpretation(null);
-        setLongInterpretation(null);
+        setShortSummary('');
+        setLongSummary('');
+        setShortSignals([]);
+        setLongSignals([]);
       } finally {
         setLoading(false);
       }
@@ -209,8 +219,10 @@ export default function useDashboardData(stockCode?: string) {
     longTermData,
     shortConfidence,
     longConfidence,
-    shortInterpretation,
-    longInterpretation,
+    shortSummary,
+    longSummary,
+    shortSignals,
+    longSignals,
     loading,
     errorMsg,
   };

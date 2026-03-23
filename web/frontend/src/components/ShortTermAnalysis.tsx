@@ -3,22 +3,22 @@ import SummaryCard from './cards/SummaryCard';
 import SignalCard from './cards/SignalCard';
 import TurningPointsCard from './cards/TurningPointCard';
 import useTurningPoints from '../hooks/useTurningPoint';
-import type { InterpretationPayload, InterpretationSignal } from '../types/interpretation';
+import type { InterpretationSignal } from '../types/interpretation';
 
 interface ShortTermAnalysisProps {
   stockName: string;
   stockCode: string;
-  interpretation?: InterpretationPayload | null;
+  summary?: string;
+  signals?: InterpretationSignal[];
   isSidebarOpen?: boolean;
 }
 
 export default function ShortTermAnalysis({
   stockCode,
-  interpretation,
+  summary = '',
+  signals = [],
   isSidebarOpen = false,
 }: ShortTermAnalysisProps) {
-  const summary = interpretation?.ai_summary ?? '';
-  const signals: InterpretationSignal[] = interpretation?.main_signals ?? [];
   const interpretationLoading = false;
   const interpretationError = null;
 
@@ -42,12 +42,6 @@ export default function ShortTermAnalysis({
           isSidebarOpen ? 'grid-cols-6' : 'grid-cols-1'
         }`}
       >
-        {interpretationLoading && (
-          <Card className="col-span-full border-gray-200 bg-white p-4">
-            <p className="text-sm text-gray-500">단기 주요 신호를 불러오는 중...</p>
-          </Card>
-        )}
-
         {!interpretationLoading && !interpretationError && signals.length === 0 && (
           <Card className="col-span-full border-gray-200 bg-white p-4">
             <p className="text-sm text-gray-400">아직 단기 주요 신호 데이터가 없습니다.</p>
