@@ -170,15 +170,19 @@ export default function SignalCard({
 
         {isCompact ? (
           <>
+            {/* 상단 (아이콘 + SHAP) */}
             <div className="mb-2 flex items-start justify-between">
               <div className={`rounded p-1 ${config.iconBg}`}>
                 <StatusIcon className={`h-3 w-3 ${config.text}`} />
               </div>
 
               <div className="text-right">
+                {/* SHAP 라벨 */}
                 <p className="mb-0.5 text-[7px] leading-none tracking-tight text-gray-400">
                   SHAP
                 </p>
+
+                {/* SHAP 값 (오타 수정됨) */}
                 <p
                   className={`text-[9px] font-semibold leading-none tracking-tight ${config.text}`}
                 >
@@ -187,6 +191,7 @@ export default function SignalCard({
               </div>
             </div>
 
+            {/* signal */}
             <h4 className="line-clamp-2 min-h-[36px] text-[12px] font-semibold leading-snug text-gray-900">
               {item.signal}
             </h4>
