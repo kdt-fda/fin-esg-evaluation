@@ -143,7 +143,7 @@ export default function SignalCard({
     >
       <Card
         className={`border p-3 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl ${
-          isCompact ? `h-[160px] ${config.bg}` : 'bg-white'
+          isCompact ? `h-[132px] ${config.bg}` : 'bg-white'
         } ${config.border}`}
       >
         <div
@@ -167,7 +167,7 @@ export default function SignalCard({
 
         {isCompact ? (
           <>
-            <div className="mb-2 flex items-start justify-between">
+            <div className="mb-1.5 flex items-start justify-between">
               <div className={`rounded p-1 ${config.iconBg}`}>
                 <StatusIcon className={`h-3 w-3 ${config.text}`} />
               </div>
@@ -184,7 +184,7 @@ export default function SignalCard({
               </div>
             </div>
 
-            <h4 className="line-clamp-2 min-h-[36px] text-[12px] font-semibold leading-snug text-gray-900">
+            <h4 className="line-clamp-2 min-h-[32px] text-[13px] font-semibold leading-snug text-gray-900">
               {item.signal}
             </h4>
           </>
