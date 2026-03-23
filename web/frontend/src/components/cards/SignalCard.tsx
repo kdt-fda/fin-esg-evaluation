@@ -1,5 +1,6 @@
 import { TrendingUp, TrendingDown, Activity } from 'lucide-react';
 import { Card } from '../ui/card';
+import { getFeatureTooltip } from './featureTooltipMap';
 import type {
   InterpretationSignal,
   SignalDirection,
@@ -83,13 +84,12 @@ export default function SignalCard({
     return value.toFixed(3);
   };
 
-  const tooltipText =
-    item.reason?.trim() ||
-    `${item.signal} / SHAP ${formatShapValue(item.shap_value)}`;
+  // feature 기준 툴팁
+  const tooltipText = getFeatureTooltip(item.feature);
 
   return (
     <Card
-      className={`relative group p-3 border transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 ${
+      className={`relative group p-3 border transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl ${
         isCompact ? config.bg : 'bg-white'
       } ${config.border}`}
     >
@@ -97,23 +97,24 @@ export default function SignalCard({
       <div
         className="
           pointer-events-none absolute left-1/2 top-full z-50 mt-3
-          w-max max-w-[260px] -translate-x-1/2
-          opacity-0 translate-y-1
+          w-max max-w-[320px] -translate-x-1/2
+          translate-y-1 opacity-0
           transition-all duration-200 delay-100
-          group-hover:opacity-100 group-hover:translate-y-0
+          group-hover:translate-y-0 group-hover:opacity-100
         "
       >
-        {/* 화살표 */}
-        <div className="mx-auto h-0 w-0 border-l-[6px] border-r-[6px] border-b-[6px] border-l-transparent border-r-transparent border-b-gray-900" />
+        {/* 화살표 (흰색) */}
+        <div className="mx-auto h-0 w-0 border-l-[6px] border-r-[6px] border-b-[6px] border-l-transparent border-r-transparent border-b-white" />
 
-        {/* 툴팁 본문 */}
-        <div className="rounded-md bg-gray-900 px-2.5 py-1.5 text-[11px] leading-relaxed text-white shadow-xl whitespace-normal text-center">
+        {/* 툴팁 본문 (흰 배경) */}
+        <div className="rounded-md border border-gray-200 bg-white px-3 py-2 text-[11px] leading-relaxed text-gray-700 shadow-xl whitespace-normal text-center">
           {tooltipText}
         </div>
       </div>
 
       {isCompact ? (
         <>
+          {/* 아이콘 + SHAP */}
           <div className="mb-2 flex items-start justify-between">
             <div className={`rounded p-1.5 ${config.iconBg}`}>
               <StatusIcon className={`h-4 w-4 ${config.text}`} />
@@ -129,16 +130,19 @@ export default function SignalCard({
             </div>
           </div>
 
+          {/* 신호명 */}
           <h4 className="text-[13px] font-semibold leading-snug text-gray-900">
             {item.signal}
           </h4>
         </>
       ) : (
         <div className="flex items-start gap-3">
+          {/* 아이콘 */}
           <div className={`shrink-0 rounded-lg p-2 ${config.iconBg}`}>
             <StatusIcon className={`h-5 w-5 ${config.text}`} />
           </div>
 
+          {/* 내용 */}
           <div className="min-w-0 flex-1">
             <div className="mb-2 flex items-start justify-between gap-3">
               <h4 className="text-[14px] font-semibold text-gray-900">
@@ -155,6 +159,7 @@ export default function SignalCard({
               </div>
             </div>
 
+            {/* LLM 해석 */}
             <p className="text-[13px] leading-relaxed text-gray-600">
               {item.reason}
             </p>
