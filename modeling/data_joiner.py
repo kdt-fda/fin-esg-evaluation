@@ -63,10 +63,7 @@ class StockDataJoiner:
     # 펀더멘털 전용 로딩 함수
     # ---------------------------------------------------------
     def load_fundamental(self, ticker, start_year=2022):
-        """
-        특정 종목의 펀더멘털 데이터를 가져옵니다. 
-        2022년부터의 데이터를 가져와서 2023년 모델링의 '과거 이력'으로 사용합니다.
-        """
+        """특정 종목의 펀더멘털 데이터를 로드"""
         conn = self._connect()
         try:
             # 정렬 기준 year, quarter 순
@@ -84,9 +81,7 @@ class StockDataJoiner:
     # 통합 데이터 로딩
     # ---------------------------------------------------------
     def load_full_features(self, stock_name, start_date=None, end_date=None):
-        """
-        [사용자 인터페이스] 종목명으로 모든 지표 데이터를 통합 로드
-        """
+        """종목명으로 모든 지표 데이터를 통합 로드"""
         # 1. 종목명으로 티커와 섹터 조회
         ticker, sector_code = self.get_sector_info(stock_name)
 
@@ -96,7 +91,7 @@ class StockDataJoiner:
         
         sector_table = self.sector_table_map.get(sector_code)
 
-        # 2. 통합 쿼리 (티커 기반)
+        # 2. 통합 쿼리
         # SQL 쿼리 전략
         # (1) 거시경제, 공통 파생 지표는 trade_date로만 JOIN
         # (2) 뉴스, 섹터 파생 지표는 trade_date + ticker로 JOIN
@@ -186,5 +181,4 @@ class StockDataJoiner:
         df_final = df_final.loc[:, ~df_final.columns.duplicated()]
         df_final = df_final.ffill()
 
-        print(f"[{stock_name}] 모델링 데이터셋 생성 완료 -> {df_final.shape}")
         return df_final

@@ -1,9 +1,8 @@
 import pandas as pd
-import numpy as np
 
 class FeatureSelector:
     def __init__(self):
-        # 1. 공통 피쳐 (고정 리스트)
+        # 1. 공통 피쳐
         self.common_base = [
             'trade_date', 'ticker', 'stock_name', 'open', 'high', 'low', 'close', 
             'volume', 'short_balance', 'news_score', 'usdkrw', 'wti', 'brent', 
@@ -32,27 +31,18 @@ class FeatureSelector:
         ]
 
     def _get_sector_derivative_features(self, df):
-        """cli_lag6 다음부터 revenue 이전까지의 섹터별 파생 지표를 동적으로 추출"""
-        try:
-            cols = list(df.columns)
-            start_idx = cols.index('cli_lag6') + 1
-            end_idx = cols.index('revenue')
-            
-            if start_idx < end_idx:
-                sector_features = cols[start_idx:end_idx]
-                return sector_features
-            return []
-        except (ValueError, IndexError):
-            return []
-
-    def create_target(self, df, horizon=5):
-        """타겟 변수 생성 (n일 후 수익률)"""
-        df = df.sort_values('trade_date').copy()
-        df['target_return'] = df['close'].shift(-horizon) / df['close'] - 1
-        return df.dropna(subset=['target_return'])
+        """통합된 데이터에서 섹터별 파생 지표를 동적으로 추출"""
+        known_cols = set(self.common_base + self.short_term_list + self.long_term_list)
+        
+        sector_features = []
+        for c in df.columns:
+            if c not in known_cols and pd.api.types.is_numeric_dtype(df[c]) and not c.startswith('target_'):
+                sector_features.append(c)
+                
+        return sector_features
 
     def get_features(self, df, mode='short'):
-        """모드에 따른 피쳐셋과 타겟 반환"""
+        """모드에 따른 학습용 피처셋(X) 반환"""
         # 섹터 파생 지표 동적 추출
         sector_features = self._get_sector_derivative_features(df)
         
@@ -73,6 +63,8 @@ class FeatureSelector:
         final_cols = [c for c in selected_features if c in df.columns]
         
         X = df[final_cols]
-        y = df['target_return']
         
-        return X, y
+        stock_name = df['stock_name'].iloc[0] if 'stock_name' in df.columns else "Unknown"
+        print(f"  └─ [{stock_name}] {mode.upper()} 모델 피처 셀렉션 완료 -> {X.shape}")
+        
+        return X

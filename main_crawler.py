@@ -29,6 +29,8 @@ class OnlyMyCodeFilter(logging.Filter):
             if "site-packages" not in record.pathname:
                 return True
         return False
+
+os.makedirs("logs", exist_ok=True)
     
 file_handler = logging.FileHandler("logs/update_log.log", encoding='utf-8')
 stream_handler = logging.StreamHandler()
@@ -62,7 +64,7 @@ def run_total_update_process():
         durations['Step 1'] = datetime.now() - step1_start
 
         if not is_bday:
-            logging.info("오늘은 휴장일입니다.")
+            logging.info("💤 오늘은 휴장일입니다.")
 
         logging.info("⏳ Step 1 완료. 서버 부하 방지를 위해 5초간 대기합니다...")
         time.sleep(5)
@@ -92,8 +94,8 @@ def run_total_update_process():
         logging.critical(f"🚨 시스템 중단 발생: {str(e)}", exc_info=True)
 
 if __name__ == "__main__":
-    schedule.every().day.at("22:30").do(run_total_update_process)
-    logging.info("⏰ 스케줄러 활성화: 매일 22:30에 업데이트를 시작합니다.")
+    schedule.every().day.at("22:00").do(run_total_update_process)
+    logging.info("⏰ 수집기 스케줄러: 매일 22:00에 업데이트를 시작합니다.")
 
     while True:
         schedule.run_pending()

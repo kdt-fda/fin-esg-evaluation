@@ -12,18 +12,38 @@ services:
       - .env
     volumes:
       - ./model_cache:/app/model_cache
-      - ./update_log.log:/app/update_log.log
+      - ./logs:/app/logs
     tty: true
     stdin_open: true
 
-  #analyzer:
-  #  build:
-  #    context: .
-  #    dockerfile: Dockerfile.analyzer
-  #  container_name: stock-analyzer-container
-  #  restart: on-failure
-  #  env_file:
-  #    - .env
-  #  # 크롤러가 데이터를 다 쌓은 뒤에 동작해야 한다면 의존성 추가
-  #  depends_on:
-  #    - crawler
+  analyzer:
+    build:
+      context: .
+      dockerfile: Dockerfile.analyzer
+      no_cache: true
+      pull: true
+    image: kyucc/fin-analyzer-bot:latest
+    container_name: stock-analyzer-container
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+    tty: true
+    stdin_open: true
+
+  interpreter:
+    build:
+      context: .
+      dockerfile: Dockerfile.interpreter
+      no_cache: true
+      pull: true
+    image: kyucc/fin-interpreter-bot:latest
+    container_name: stock-interpreter-container
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+    tty: true
+    stdin_open: true

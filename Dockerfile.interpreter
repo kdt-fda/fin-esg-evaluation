@@ -20,13 +20,11 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # 5. 내 코드 전부 복사
 COPY . .
 
-# 6. 인공지능 모델 저장 및 로그 저장 폴더 생성
-ENV TRANSFORMERS_CACHE=/app/model_cache
-RUN mkdir -p /app/model_cache
+# 6. 로그 저장 폴더 생성
 RUN mkdir -p /app/logs
 
 # 7. 환경 변수 설정 (Python 출력 로그 확인용)
 ENV PYTHONUNBUFFERED=1
 
 # 8. 실행
-CMD ["python", "main_crawler.py"]
+CMD ["python", "main_interpreter.py"]

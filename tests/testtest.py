@@ -37,15 +37,19 @@ adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=retry_st
 _session.mount('http://', adapter)
 _session.mount('https://', adapter)
 
+# 🔥 여기서부터 _safe_post 교체됨! 🔥
 def _safe_post(self, **params):
     headers = getattr(self, 'headers', {}).copy() if getattr(self, 'headers', None) else {}
     headers['User-Agent'] = _UA
+    # 🚨 GCP 차단을 뚫기 위해 더 정교한 속임수(Origin, X-Requested-With) 추가
     headers['Referer'] = "http://data.krx.co.kr/contents/MDC/MAIN/main/index.cmd" 
     headers['Origin'] = "http://data.krx.co.kr" 
     headers['X-Requested-With'] = "XMLHttpRequest" 
+    
     fake_ip = _get_fake_ip()
     headers['X-Forwarded-For'] = fake_ip
     headers['X-Real-IP'] = fake_ip
+    
     return _session.post(self.url, headers=headers, data=params, timeout=30)
 
 def _safe_get(self, **params):
@@ -139,11 +143,11 @@ def update_kospi200_stocks_table():
                         break
                     else:
                         print(f"⚠️ {eng_code} 섹터 0건 수집. 재시도... ({attempt+1}/3)")
-                        time.sleep(0.5)
+                        time.sleep(1) # 🚨 휴식 추가
                         
                 except Exception as e:
                     print(f"❌ {eng_code} 파이썬 에러 발생: {e}")
-                    time.sleep(0.5)
+                    time.sleep(1) # 🚨 휴식 추가
 
             if not tickers:
                 continue

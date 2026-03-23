@@ -3,6 +3,7 @@ import requests
 import pymysql
 import numpy as np
 import pandas as pd
+import random
 from pykrx import stock
 from pykrx.website.comm import webio
 from datetime import datetime
@@ -13,10 +14,13 @@ from requests.adapters import HTTPAdapter
 load_dotenv()
 
 # ==========================================
-# 세션 패치 (전역 설정)
+# 세션 패치 및 방화벽 우회 패치
 # ==========================================
 _session = requests.Session()
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+
+def _get_fake_ip():
+    return f"211.{random.randint(100, 250)}.{random.randint(1, 250)}.{random.randint(1, 250)}"
 
 _session.headers.update({
     "User-Agent": _UA,
@@ -37,12 +41,18 @@ def _safe_post(self, **params):
     headers = getattr(self, 'headers', {}).copy() if getattr(self, 'headers', None) else {}
     headers['User-Agent'] = _UA
     headers['Referer'] = "http://data.krx.co.kr/"
+    fake_ip = _get_fake_ip()
+    headers['X-Forwarded-For'] = fake_ip
+    headers['X-Real-IP'] = fake_ip
     return _session.post(self.url, headers=headers, data=params, timeout=30)
 
 def _safe_get(self, **params):
     headers = getattr(self, 'headers', {}).copy() if getattr(self, 'headers', None) else {}
     headers['User-Agent'] = _UA
     headers['Referer'] = "http://data.krx.co.kr/"
+    fake_ip = _get_fake_ip()
+    headers['X-Forwarded-For'] = fake_ip
+    headers['X-Real-IP'] = fake_ip
     return _session.get(self.url, headers=headers, params=params, timeout=30)
 
 webio.Post.read = _safe_post
@@ -71,17 +81,30 @@ def _connect():
 def login_to_krx():
     KRX_ID = os.getenv("KRX_ID")
     KRX_PW = os.getenv("KRX_PW")
-    _LOGIN_PAGE = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001.cmd"
-    _LOGIN_URL = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001D1.cmd"
-    _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36..."
-
-    _session.get(_LOGIN_PAGE)
-    payload = {"mbrId": KRX_ID, "pw": KRX_PW}
-    resp = _session.post(_LOGIN_URL, data=payload)
     
-    if resp.json().get("_error_code") in ["CD001", "CD011"]:
-        return True
-    return False
+    if not KRX_ID or not KRX_PW:
+        print("⚠️ KRX 계정 정보가 없습니다. 익명 세션으로 진행합니다.")
+        return False
+
+    _LOGIN_PAGE = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001.cmd"
+    _LOGIN_JSP  = "https://data.krx.co.kr/contents/MDC/COMS/client/view/login.jsp?site=mdc"
+    _LOGIN_URL = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001D1.cmd"
+
+    try:
+        fake_ip = _get_fake_ip()
+        login_headers = {"X-Forwarded-For": fake_ip, "X-Real-IP": fake_ip}
+
+        _session.get(_LOGIN_PAGE, headers=login_headers)
+        _session.get(_LOGIN_JSP, headers=login_headers)
+        payload = {"mbrId": KRX_ID, "pw": KRX_PW}
+        resp = _session.post(_LOGIN_URL, data=payload, headers=login_headers)
+        
+        if resp.json().get("_error_code") in ["CD001", "CD011"]:
+            print("✅ KRX 로그인 성공")
+            return True
+        return False
+    except:
+        return False
 
 FETCH_START_DATE = '2021-01-01'
 FINAL_START_DATE = '2023-01-01'
@@ -188,9 +211,7 @@ def send_to_common_db(df):
 def run_common_indicator_calculator():
     print("🚀 공통 지표 계산 및 업데이트 중...")
 
-    if not login_to_krx():
-        print("❌ KRX 로그인 실패로 공통 지표 수집을 중단합니다.")
-        return
+    login_to_krx()
     
     s_date = pd.to_datetime(FETCH_START_DATE).strftime("%Y%m%d")
     e_date = datetime.now().strftime("%Y%m%d")

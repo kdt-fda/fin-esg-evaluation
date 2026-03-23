@@ -1,11 +1,11 @@
 import os
 import requests
 import pandas as pd
-import numpy as np
 import pymysql
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import warnings
+import FinanceDataReader as fdr
 
 warnings.filterwarnings('ignore')
 load_dotenv()
@@ -62,6 +62,21 @@ def fetch_fred_series(series_id, colname, start_date):
     df[colname] = pd.to_numeric(df["value"], errors="coerce")
     return df[["date", colname]]
 
+def fetch_market_data(ticker, colname, start_date):
+    try:
+        df = fdr.DataReader(ticker, start_date)
+        if df.empty:
+            print(f"⚠️ {ticker} 데이터를 가져오지 못했습니다.")
+            return pd.DataFrame()
+        
+        df.index.name = 'date'
+        df = df.reset_index()
+        df = df[['date', 'Close']].rename(columns={'Close': colname})
+        return df
+    except Exception as e:
+        print(f"⚠️ 시장 데이터 수집 에러 ({ticker}): {e}")
+        return pd.DataFrame()
+
 # ==========================================
 # 3. 메인 실행 파이프라인
 # ==========================================
@@ -78,7 +93,7 @@ def run_macro_collector(is_initial=False):
 
     e_d = datetime.now().strftime("%Y%m%d")
     e_m = datetime.now().strftime("%Y%m")
-    e_q = "2025Q4"
+    e_q = f"{datetime.now().year}Q{(datetime.now().month - 1) // 3 + 1}"
 
     dfs = {}
 
@@ -88,8 +103,7 @@ def run_macro_collector(is_initial=False):
     for name, stat, item in daily_vars:
         dfs[name] = ecos_fetch(stat, item, "D", s_d, e_d, name)
 
-    monthly_vars = [("wti", "902Y003", "010101"), ("brent", "902Y003", "010103"), 
-                    ("kr_cpi", "901Y009", "0"), ("unemployment_rate", "901Y027", "I61BC"), 
+    monthly_vars = [("kr_cpi", "901Y009", "0"), ("unemployment_rate", "901Y027", "I61BC"), 
                     ("ccsi", "511Y002", "FME")]
     for name, stat, item in monthly_vars:
         dfs[name] = ecos_fetch(stat, item, "M", s_m, e_m, name)
@@ -115,6 +129,11 @@ def run_macro_collector(is_initial=False):
                  "jpy10": "IRLTLT01JPM156N", "pmi": "IPMAN"}
     for col, sid in fred_vars.items():
         dfs[col] = fetch_fred_series(sid, col, s_fred)
+
+    # 유가(WTI, Brent)
+    market_vars = {"wti": "CL=F", "brent": "BZ=F"} # CL=F: WTI 선물, BZ=F: 브렌트유 선물
+    for col, ticker in market_vars.items():
+        dfs[col] = fetch_market_data(ticker, col, s_fred)
 
     # 통합 및 결측치 방어
     valid_dfs = [v for v in dfs.values() if v is not None and not v.empty]

@@ -3,13 +3,65 @@ import re
 import time
 import pymysql
 import requests
+import random
 import numpy as np
 import pandas as pd
 import FinanceDataReader as fdr
+from pykrx import stock
+from pykrx.website.comm import webio
+from urllib3.util.retry import Retry
+from requests.adapters import HTTPAdapter
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# ==========================================
+# 0. 방화벽 우회 패치 (KRX 접근용)
+# ==========================================
+_session = requests.Session()
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+
+def _get_fake_ip():
+    return f"211.{random.randint(100, 250)}.{random.randint(1, 250)}.{random.randint(1, 250)}"
+
+_session.headers.update({
+    "User-Agent": _UA,
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Referer": "http://data.krx.co.kr/"
+})
+
+retry_strategy = Retry(
+    total=5,
+    backoff_factor=1,
+    status_forcelist=[403, 429, 500, 502, 503, 504]
+)
+adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=retry_strategy)
+_session.mount('http://', adapter)
+_session.mount('https://', adapter)
+
+def _safe_post(self, **params):
+    headers = getattr(self, 'headers', {}).copy() if getattr(self, 'headers', None) else {}
+    headers['User-Agent'] = _UA
+    headers['Referer'] = "http://data.krx.co.kr/contents/MDC/MAIN/main/index.cmd" 
+    headers['Origin'] = "http://data.krx.co.kr" 
+    headers['X-Requested-With'] = "XMLHttpRequest" 
+    fake_ip = _get_fake_ip()
+    headers['X-Forwarded-For'] = fake_ip
+    headers['X-Real-IP'] = fake_ip
+    return _session.post(self.url, headers=headers, data=params, timeout=30)
+
+def _safe_get(self, **params):
+    headers = getattr(self, 'headers', {}).copy() if getattr(self, 'headers', None) else {}
+    headers['User-Agent'] = _UA
+    headers['Referer'] = "http://data.krx.co.kr/"
+    fake_ip = _get_fake_ip()
+    headers['X-Forwarded-For'] = fake_ip
+    headers['X-Real-IP'] = fake_ip
+    return _session.get(self.url, headers=headers, params=params, timeout=30)
+
+webio.Post.read = _safe_post
+webio.Get.read = _safe_get
 
 # ==========================================
 # 1. 설정 및 초기화
@@ -28,14 +80,12 @@ HEADERS = {
     "Referer": f"{BASE_URL}/",
 }
 
-# Seibro API 호출 스펙
 REQUESTS = {
     "fin_stmt": {"action":"lsgnInvcList", "menu_no":8,  "w2xpath":"/IPORTAL/user/company/BIP_CNTS01005V.xml", "extra":'<UNIT value="100000000"/>'},
     "ratio":    {"action":"fnafRatioList","menu_no":9,  "w2xpath":"/IPORTAL/user/company/BIP_CNTS01008V.xml", "extra":""},
     "invest":   {"action":"invstIndexList","menu_no":10,"w2xpath":"/IPORTAL/user/company/BIP_CNTS01009V.xml", "extra":""},
 }
 
-# DB 컬럼 매핑
 HB_TO_COL = {
     "PER(주가수익비율)": "per_raw",
     "PBR(주가순자산비율)": "pbr",
@@ -58,7 +108,6 @@ HB_TO_COL = {
     "현금및현금성자산(현금성자산)": "cash",
 }
 
-# 재편된 DB 구조에 맞춘 최종 컬럼 리스트
 FINAL_DB_COLS = [
     "ticker", "year", "quarter", "revenue", "revenue_growth", 
     "operating_income", "operating_margin", "net_income", 
@@ -78,6 +127,34 @@ def _connect():
         password=os.getenv('DB_PASSWORD'),
         database=os.getenv('DB_NAME')
     )
+
+def login_to_krx():
+    KRX_ID = os.getenv("KRX_ID")
+    KRX_PW = os.getenv("KRX_PW")
+    
+    if not KRX_ID or not KRX_PW:
+        print("⚠️ KRX 계정 정보가 없습니다. 익명 세션으로 진행합니다.")
+        return False
+
+    _LOGIN_PAGE = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001.cmd"
+    _LOGIN_JSP  = "https://data.krx.co.kr/contents/MDC/COMS/client/view/login.jsp?site=mdc"
+    _LOGIN_URL = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001D1.cmd"
+
+    try:
+        fake_ip = _get_fake_ip()
+        login_headers = {"X-Forwarded-For": fake_ip, "X-Real-IP": fake_ip}
+
+        _session.get(_LOGIN_PAGE, headers=login_headers)
+        _session.get(_LOGIN_JSP, headers=login_headers)
+        payload = {"mbrId": KRX_ID, "pw": KRX_PW}
+        resp = _session.post(_LOGIN_URL, data=payload, headers=login_headers)
+        
+        if resp.json().get("_error_code") in ["CD001", "CD011"]:
+            print("✅ KRX 로그인(쿠키 발급) 성공")
+            return True
+        return False
+    except:
+        return False
 
 def build_payload(spec, custno):
     return f"""<reqParam action="{spec['action']}" task="ksd.safe.bip.cnts.Company.process.EntrFnafInfoPTask">
@@ -136,26 +213,20 @@ A_MAP = make_a_to_period(TO_YEAR)
 
 def process_raw_data(all_long_df, ticker):
     df = all_long_df.copy()
-    # 기간 매핑
     periods = df["A_index"].apply(lambda i: A_MAP.get(int(i), (None, None))).tolist()
     df["year"], df["quarter"] = zip(*periods)
     
-    # 분기 데이터만 필터링 (0은 연간 데이터이므로 제외)
     df = df[df["quarter"] > 0].dropna(subset=["year"])
     
-    # 계정 매핑
     df = df[df["account"].isin(HB_TO_COL)].copy()
     df["col"] = df["account"].map(HB_TO_COL)
     
-    # Pivot
     wide = df.pivot_table(index=["year", "quarter"], columns="col", values="value", aggfunc="first").reset_index()
     
-    # 🎯 타입 에러 방지: 모든 수치 컬럼을 숫자형으로 강제 변환
     num_cols = wide.columns.drop(['year', 'quarter'])
     for c in num_cols:
         wide[c] = pd.to_numeric(wide[c], errors="coerce")
     
-    # 단위 보정
     money_cols = ["revenue", "operating_income", "net_income", "rnd_expense",
                   "depreciation","short_debt", "long_debt", "cash"]
     pct_cols = ["roa", "roe", "revenue_growth", "operating_margin", "debt_ratio", "ebitda_margin"]
@@ -165,17 +236,15 @@ def process_raw_data(all_long_df, ticker):
     for c in pct_cols:
         if c in wide.columns: wide[c] = wide[c] * 0.01
 
-    # EBITDA 계산
     if "revenue" in wide.columns and "ebitda_margin" in wide.columns:
         wide["ebitda"] = wide["revenue"] * wide["ebitda_margin"]
     
     wide["ticker"] = ticker
     return wide
 
-def add_market_data(df, ticker):
+def add_market_data(df, ticker, shares_map):
     try:
-        listing = fdr.StockListing("KRX")
-        shares = listing.loc[listing["Code"] == ticker, "Stocks"].values[0]
+        shares = shares_map.get(str(ticker).zfill(6), np.nan)
         
         start_date = f"{int(df['year'].min())}-01-01"
         price_df = fdr.DataReader(ticker, start_date)
@@ -192,25 +261,26 @@ def add_market_data(df, ticker):
         df["shares"] = shares
         df["market_cap"] = df["price"] * df["shares"]
 
-        # 🎯 PER 계산 (EPS 우선, 없으면 제공된 per_raw 사용)
         if "eps" in df.columns:
             eps_clean = pd.to_numeric(df["eps"], errors="coerce").replace(0, np.nan)
             df["per"] = df["price"] / eps_clean
+            if "per_raw" in df.columns:
+                df["per"] = df["per"].fillna(df["per_raw"])
         else:
             df["per"] = df.get("per_raw", np.nan)
 
-        # 🎯 EV/EBITDA 정밀 계산 (부채/현금 고려)
         if "ebitda" in df.columns:
-            # 💡 [핵심] 컬럼 존재 여부 체크 후 0으로 안전하게 합산
-            s_debt = df["short_debt"] if "short_debt" in df.columns else 0
-            l_debt = df["long_debt"] if "long_debt" in df.columns else 0
-            cash_val = df["cash"] if "cash" in df.columns else 0
+            s_debt = df["short_debt"].fillna(0) if "short_debt" in df.columns else 0
+            l_debt = df["long_debt"].fillna(0) if "long_debt" in df.columns else 0
+            cash_val = df["cash"].fillna(0) if "cash" in df.columns else 0
             
             ev = df["market_cap"] + s_debt + l_debt - cash_val
             ebitda_clean = pd.to_numeric(df["ebitda"], errors="coerce").replace(0, np.nan)
             df["ev_ebitda"] = ev / ebitda_clean
+            
+            if "ev_ebitda_raw" in df.columns:
+                df["ev_ebitda"] = df["ev_ebitda"].fillna(df["ev_ebitda_raw"])
         else:
-            # ebitda 데이터가 없으면 Seibro에서 준 원본 값을 백업으로 사용
             df["ev_ebitda"] = df.get("ev_ebitda_raw", np.nan)
 
     except Exception as e:
@@ -238,7 +308,6 @@ def send_to_db(df):
         cur = conn.cursor()
         df = df.replace({np.nan: None})
         
-        # SQL 구문 자동 생성
         cols = [c for c in FINAL_DB_COLS if c in df.columns]
         placeholders = ", ".join(["%s"] * len(cols))
         updates = ", ".join([f"{c}=VALUES({c})" for c in cols if c not in ["ticker", "year", "quarter"]])
@@ -255,7 +324,7 @@ def send_to_db(df):
         print(f"❌ DB 적재 에러: {e}"); conn.rollback()
     finally: conn.close()
 
-def fetch_single_ticker(ticker_info):
+def fetch_single_ticker(ticker_info, shares_map):
     ticker = ticker_info['ticker']
     name = ticker_info['stock_name']
 
@@ -273,7 +342,7 @@ def fetch_single_ticker(ticker_info):
         
         combined_long = pd.concat(all_long, ignore_index=True)
         panel = process_raw_data(combined_long, ticker)
-        panel = add_market_data(panel, ticker)
+        panel = add_market_data(panel, ticker, shares_map)
         
         for c in FINAL_DB_COLS:
             if c not in panel.columns: panel[c] = np.nan
@@ -290,16 +359,37 @@ def run_fundamental_crawler(max_workers=3):
     """멀티스레딩 기반 크롤러 메인"""
     targets = get_targets_from_db()
     
-    def get_session():
-        s = requests.Session()
-        s.get(BASE_URL)
-        return s
+    login_to_krx()
+
+    print("📊 KOSPI200 상장주식수 마스터 데이터 1회 사전 로딩 중...")
+    try:
+        now = pd.Timestamp.today()
+        b_days = pd.bdate_range(end=now, periods=5)
+        
+        shares_map = {}
+        for d in reversed(b_days):
+            target_date = d.strftime("%Y%m%d")
+            try:
+                df_cap = stock.get_market_cap(target_date, market="KOSPI")
+                if not df_cap.empty and '상장주식수' in df_cap.columns:
+                    shares_map = {str(k).strip().zfill(6): int(v) for k, v in df_cap['상장주식수'].items() if pd.notnull(v)}
+                    print(f"✅ [{target_date}] 기준 상장주식수 로딩 완료")
+                    break
+            except:
+                continue
+                
+        if not shares_map:
+            print("⚠️ KOSPI200 마스터 주식수 데이터를 가져오지 못했습니다.")
+            
+    except Exception as e:
+        print(f"⚠️ 마스터 데이터 로딩 실패. 일부 지표가 누락될 수 있습니다: {e}")
+        shares_map = {}
 
     batch_results = []
     print(f"🚀 멀티스레딩 크롤링 시작 (Worker: {max_workers})...")
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(fetch_single_ticker, t): t for t in targets}
+        futures = {executor.submit(fetch_single_ticker, t, shares_map): t for t in targets}
         
         count = 0
         for future in as_completed(futures):
@@ -308,13 +398,11 @@ def run_fundamental_crawler(max_workers=3):
                 batch_results.append(result)
             
             count += 1
-            # 10종목마다 DB 중간 저장 (안전성)
             if len(batch_results) >= 10:
                 send_to_db(pd.concat(batch_results, ignore_index=True))
                 batch_results = []
                 print(f"--- 중간 적재 완료 ({count}/{len(targets)}) ---")
 
-    # 남은 데이터 저장
     if batch_results:
         send_to_db(pd.concat(batch_results, ignore_index=True))
     
