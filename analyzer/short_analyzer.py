@@ -149,13 +149,17 @@ def run_short_term_pipeline(win: int = 10, horizon: int = 20):
     base_test = pd.concat(global_base_te, axis=0).reset_index(drop=True)
     X_inf = pd.concat(inf_X_list, axis=0).reset_index(drop=True)
 
+    X_train['ticker_id'] = X_train['ticker_id'].astype('category')
+    X_test['ticker_id'] = X_test['ticker_id'].astype('category')
+    X_inf['ticker_id'] = X_inf['ticker_id'].astype('category')
+
     print(f"[2/5] XGBoost GPU 감지 및 {horizon}개 모델 병렬 학습 시작 (학습 샘플: {len(X_train)}건)...")
     
     use_gpu = False
     params = {
         "n_estimators": 200, "max_depth": 4, "learning_rate": 0.03,
         "subsample": 0.8, "colsample_bytree": 0.8, "objective": "reg:squarederror", 
-        "random_state": 42
+        "random_state": 42, "enable_categorical": True
     }
     
     # GPU(CUDA) 테스트
