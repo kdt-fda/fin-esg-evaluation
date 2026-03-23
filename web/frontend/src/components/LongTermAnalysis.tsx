@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import SummaryCard from './cards/SummaryCard';
 import SignalCard from './cards/SignalCard';
 import PositioningCard from './cards/PositioningCard';
@@ -16,6 +16,8 @@ interface LongTermAnalysisProps {
   isSidebarOpen?: boolean;
 }
 
+type TabType = 'ai' | 'chart';
+
 export default function LongTermAnalysis({
   stockCode,
   currentSector,
@@ -24,6 +26,8 @@ export default function LongTermAnalysis({
   signals = [],
   isSidebarOpen = false,
 }: LongTermAnalysisProps) {
+  const [activeTab, setActiveTab] = useState<TabType>('ai');
+
   const loading = false;
   const errorMsg = null;
 
@@ -55,41 +59,71 @@ export default function LongTermAnalysis({
   }, [data, stockCode]);
 
   return (
-    <div className="space-y-2 transition-all duration-300">
-      <SummaryCard
-        summary={summary}
-        loading={loading}
-        error={errorMsg}
-        emptyMessage="아직 중장기 AI 해석 데이터가 없습니다."
-      />
+    <div className="space-y-3 transition-all duration-300">
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setActiveTab('ai')}
+          className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+            activeTab === 'ai'
+              ? 'bg-blue-500 text-white shadow-sm'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          AI 해석
+        </button>
 
-      <div
-        className={`grid gap-2.5 overflow-visible transition-all duration-300 ${
-          isSidebarOpen ? 'grid-cols-6' : 'grid-cols-1'
-        }`}
-      >
-        {!loading && !errorMsg && signals.length === 0 && (
-          <Card className="col-span-full border-gray-200 bg-white p-4">
-            <p className="text-sm text-gray-400">아직 중장기 주요 신호 데이터가 없습니다.</p>
-          </Card>
-        )}
-
-        {!loading &&
-          signals.map((signal, index) => (
-            <SignalCard
-              key={`${signal.feature}-${index}`}
-              item={signal}
-              isCompact={isSidebarOpen}
-            />
-          ))}
+        <button
+          onClick={() => setActiveTab('chart')}
+          className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+            activeTab === 'chart'
+              ? 'bg-blue-500 text-white shadow-sm'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          차트 해석
+        </button>
       </div>
 
-      <PositioningCard
-        currentSector={currentSector}
-        totalCompanies={sectorPosition.totalCompanies}
-        currentRank={sectorPosition.currentRank}
-        topPercent={sectorPosition.topPercent}
-      />
+      {activeTab === 'ai' && (
+        <>
+          <SummaryCard
+            summary={summary}
+            loading={loading}
+            error={errorMsg}
+            emptyMessage="아직 중장기 AI 해석 데이터가 없습니다."
+          />
+
+          <div
+            className={`grid gap-2.5 overflow-visible transition-all duration-300 ${
+              isSidebarOpen ? 'grid-cols-6' : 'grid-cols-1'
+            }`}
+          >
+            {!loading && !errorMsg && signals.length === 0 && (
+              <Card className="col-span-full border-gray-200 bg-white p-4">
+                <p className="text-sm text-gray-400">아직 중장기 주요 신호 데이터가 없습니다.</p>
+              </Card>
+            )}
+
+            {!loading &&
+              signals.map((signal, index) => (
+                <SignalCard
+                  key={`${signal.feature}-${index}`}
+                  item={signal}
+                  isCompact={isSidebarOpen}
+                />
+              ))}
+          </div>
+        </>
+      )}
+
+      {activeTab === 'chart' && (
+        <PositioningCard
+          currentSector={currentSector}
+          totalCompanies={sectorPosition.totalCompanies}
+          currentRank={sectorPosition.currentRank}
+          topPercent={sectorPosition.topPercent}
+        />
+      )}
     </div>
   );
 }
