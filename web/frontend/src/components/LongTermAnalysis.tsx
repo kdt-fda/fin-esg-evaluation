@@ -64,18 +64,18 @@ export default function LongTermAnalysis({
       />
 
       <div
-        className={`grid gap-2.5 transition-all duration-300 ${
+        className={`grid gap-2.5 overflow-visible transition-all duration-300 ${
           isSidebarOpen ? 'grid-cols-6' : 'grid-cols-1'
         }`}
       >
         {loading && (
-          <Card className="p-4 bg-white border-gray-200 col-span-full">
+          <Card className="col-span-full border-gray-200 bg-white p-4">
             <p className="text-sm text-gray-500">중장기 주요 신호를 불러오는 중...</p>
           </Card>
         )}
 
         {!loading && !errorMsg && signals.length === 0 && (
-          <Card className="p-4 bg-white border-gray-200 col-span-full">
+          <Card className="col-span-full border-gray-200 bg-white p-4">
             <p className="text-sm text-gray-400">아직 중장기 주요 신호 데이터가 없습니다.</p>
           </Card>
         )}
