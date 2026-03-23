@@ -35,58 +35,27 @@ export default function ShortTermAnalysis({
 
   return (
     <div className="space-y-3 transition-all duration-300">
-      <div className="inline-flex items-center rounded-2xl border border-white/60 bg-white/70 p-1 shadow-sm backdrop-blur-md">
+      <div className="flex items-center gap-2">
         <button
           onClick={() => setActiveTab('ai')}
-          className={`rounded-xl px-4 py-2 text-sm font-medium tracking-tight transition-all duration-200 ${
+          className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
             activeTab === 'ai'
-              ? 'bg-white text-gray-900 shadow-[0_1px_2px_rgba(0,0,0,0.08),0_6px_18px_rgba(0,0,0,0.06)]'
-              : 'text-gray-500 hover:bg-white/60 hover:text-gray-700'
+              ? 'bg-blue-500 text-white shadow-sm'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
           }`}
         >
-          <span className="flex items-center gap-1.5">
-            <svg
-              className="h-4 w-4"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M12 3l1.9 3.8L18 8.7l-3 2.9.7 4.1L12 13.8 8.3 15.7 9 11.6 6 8.7l4.1-.9L12 3z" />
-            </svg>
-            AI 해석
-          </span>
+          AI 해석
         </button>
 
         <button
           onClick={() => setActiveTab('chart')}
-          className={`rounded-xl px-4 py-2 text-sm font-medium tracking-tight transition-all duration-200 ${
+          className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
             activeTab === 'chart'
-              ? 'bg-white text-gray-900 shadow-[0_1px_2px_rgba(0,0,0,0.08),0_6px_18px_rgba(0,0,0,0.06)]'
-              : 'text-gray-500 hover:bg-white/60 hover:text-gray-700'
+              ? 'bg-blue-500 text-white shadow-sm'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
           }`}
         >
-          <span className="flex items-center gap-1.5">
-            <svg
-              className="h-4 w-4"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M4 19h16" />
-              <path d="M7 15l3-3 3 2 4-5" />
-              <circle cx="7" cy="15" r="1" fill="currentColor" stroke="none" />
-              <circle cx="10" cy="12" r="1" fill="currentColor" stroke="none" />
-              <circle cx="13" cy="14" r="1" fill="currentColor" stroke="none" />
-              <circle cx="17" cy="9" r="1" fill="currentColor" stroke="none" />
-            </svg>
-            차트 해석
-          </span>
+          차트 해석
         </button>
       </div>
 
