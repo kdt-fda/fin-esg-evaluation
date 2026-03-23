@@ -1,72 +1,3 @@
-import { TrendingUp, TrendingDown, Activity } from 'lucide-react';
-import { Card } from '../ui/card';
-import type { InterpretationSignal, SignalDirection, SignalStrength } from '../../types/interpretation';
-
-export type SignalCardItem = InterpretationSignal;
-
-interface SignalCardProps {
-  item: SignalCardItem;
-  isCompact?: boolean;
-}
-
-const getStatusConfig = (
-  direction: SignalDirection,
-  strength: SignalStrength
-) => {
-  const styles = {
-    high: {
-      positive: {
-        bg: 'bg-orange-100',
-        border: 'border-orange-400',
-        text: 'text-orange-800',
-        iconBg: 'bg-orange-200',
-        icon: TrendingUp,
-      },
-      negative: {
-        bg: 'bg-blue-100',
-        border: 'border-blue-400',
-        text: 'text-blue-800',
-        iconBg: 'bg-blue-200',
-        icon: TrendingDown,
-      },
-    },
-    medium: {
-      positive: {
-        bg: 'bg-orange-50',
-        border: 'border-orange-300',
-        text: 'text-orange-700',
-        iconBg: 'bg-orange-100',
-        icon: TrendingUp,
-      },
-      negative: {
-        bg: 'bg-blue-50',
-        border: 'border-blue-300',
-        text: 'text-blue-700',
-        iconBg: 'bg-blue-100',
-        icon: TrendingDown,
-      },
-    },
-    low: {
-      positive: {
-        bg: 'bg-orange-50',
-        border: 'border-orange-200',
-        text: 'text-orange-600',
-        iconBg: 'bg-orange-50',
-        icon: Activity,
-      },
-      negative: {
-        bg: 'bg-blue-50',
-        border: 'border-blue-200',
-        text: 'text-blue-600',
-        iconBg: 'bg-blue-50',
-        icon: Activity,
-      },
-    },
-  };
-
-  return styles[strength][direction];
-};
-
 export default function SignalCard({
   item,
   isCompact = false,
@@ -81,10 +12,15 @@ export default function SignalCard({
 
   return (
     <Card
-      className={`p-3 border transition-all duration-300 hover:shadow-md ${
+      className={`relative group p-3 border transition-all duration-300 hover:shadow-md ${
         isCompact ? config.bg : 'bg-white'
       } ${config.border}`}
     >
+      {/* 툴팁 */}
+      <div className="pointer-events-none absolute left-1/2 top-0 z-20 w-max max-w-[220px] -translate-x-1/2 -translate-y-[110%] rounded-md bg-gray-900 px-2 py-1 text-[11px] text-white opacity-0 shadow-lg transition-all duration-200 group-hover:opacity-100 group-hover:-translate-y-[120%]">
+        {item.reason}
+      </div>
+
       {isCompact ? (
         <>
           {/* 아이콘 + SHAP */}
