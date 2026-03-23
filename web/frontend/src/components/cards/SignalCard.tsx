@@ -139,7 +139,7 @@ export default function SignalCard({
     <div
       ref={wrapperRef}
       onMouseEnter={handleMouseEnter}
-      className="relative group"
+      className="relative z-0 group hover:z-50"
     >
       <Card
         className={`border p-3 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl ${
